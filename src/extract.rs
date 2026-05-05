@@ -6,7 +6,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use std::fs::{self, File};
 use std::io::Write;
 use std::os::unix::fs::FileExt;
-use std::path::Path;
+use std::path::{Path, PathBuf, Component};
 
 pub fn extract(container_path: &Path, output_dir: &Path, password: &str) -> Result<()> {
     println!("[Info] Opening container {}...", container_path.display());
@@ -45,7 +45,6 @@ pub fn extract(container_path: &Path, output_dir: &Path, password: &str) -> Resu
 
     let data_offset = (HEADER_SIZE as u64) + header.index_size;
 
-    // Iterative calculation of total size
     let mut total_size = 0u64;
     let mut stack = vec![&root_index];
     while let Some(node) = stack.pop() {
@@ -67,18 +66,29 @@ pub fn extract(container_path: &Path, output_dir: &Path, password: &str) -> Resu
 
     let mut current_extracted = 0u64;
     
-    // Iterative extraction - NO Path Traversal Protection as requested
+    // Expert Mode: Allow .. and absolute-style paths but ground them in output_dir
     let mut extract_stack = vec![(&root_index, output_dir.to_path_buf())];
     while let Some((node, current_path)) = extract_stack.pop() {
         match node {
             Inode::Directory { entries, .. } => {
                 fs::create_dir_all(&current_path)?;
                 for (name, child_inode) in entries.iter() {
-                    let child_path = current_path.join(name);
+                    // Expert Logic: Strip root components to ensure it's relative to current_path
+                    let sanitized_name: PathBuf = Path::new(name)
+                        .components()
+                        .filter(|c| matches!(c, Component::Normal(_) | Component::CurDir | Component::ParentDir))
+                        .collect();
+                    
+                    let child_path = current_path.join(sanitized_name);
                     extract_stack.push((child_inode, child_path));
                 }
             }
             Inode::File { size, offset: file_start_offset, .. } => {
+                // Ensure parent directory exists for files that might have been jumped via ..
+                if let Some(parent) = current_path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                
                 let mut out_file = File::create(&current_path)?;
                 let mut remaining = *size;
                 let mut current_file_pos = 0u64;
