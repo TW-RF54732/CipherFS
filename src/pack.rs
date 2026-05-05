@@ -4,7 +4,6 @@ use crate::index::Inode;
 use crate::layout::{Argon2Params, Header, CHUNK_SIZE, MAGIC_BYTES};
 use indicatif::{ProgressBar, ProgressStyle};
 use rand::Rng;
-use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Write, BufWriter};

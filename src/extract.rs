@@ -4,6 +4,7 @@ use crate::index::Inode;
 use crate::layout::{Header, CHUNK_SIZE, MAGIC_BYTES, HEADER_SIZE};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::fs::{self, File};
+use std::io::Write;
 use std::os::unix::fs::FileExt;
 use std::path::Path;
 

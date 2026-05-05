@@ -88,7 +88,7 @@ impl Filesystem for CipherFS {
                 return;
             }
         }
-        reply.error(libc::ENOENT);
+        reply.error(libc::ENOENT.into());
     }
 
     fn getattr(&self, _req: &Request, ino: INodeNo, _fh: Option<FileHandle>, reply: ReplyAttr) {
@@ -96,7 +96,7 @@ impl Filesystem for CipherFS {
             let attr = inode_to_attr(ino.into(), inode);
             reply.attr(&TTL, &attr);
         } else {
-            reply.error(libc::ENOENT);
+            reply.error(libc::ENOENT.into());
         }
     }
 
@@ -126,10 +126,10 @@ impl Filesystem for CipherFS {
                 }
                 reply.ok();
             } else {
-                reply.error(libc::ENOTDIR);
+                reply.error(libc::ENOTDIR.into());
             }
         } else {
-            reply.error(libc::ENOENT);
+            reply.error(libc::ENOENT.into());
         }
     }
 
@@ -161,9 +161,6 @@ impl Filesystem for CipherFS {
                 let chunk_file_pos = self.data_offset + chunk_idx * (CHUNK_SIZE as u64 + 16);
                 let nonce = derive_chunk_nonce(&self.master_nonce, chunk_idx);
                 
-                // Determine actual encrypted size (last chunk might be smaller)
-                // However, our pack logic ensures all middle chunks are CHUNK_SIZE.
-                // We need to be careful with the last chunk.
                 let mut encrypted_chunk = vec![0u8; CHUNK_SIZE + 16]; 
                 let n = match self.file.read_at(&mut encrypted_chunk, chunk_file_pos) {
                     Ok(n) => n,
@@ -184,7 +181,7 @@ impl Filesystem for CipherFS {
             
             reply.data(&result);
         } else {
-            reply.error(libc::ENOENT);
+            reply.error(libc::ENOENT.into());
         }
     }
 }

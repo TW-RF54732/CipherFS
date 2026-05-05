@@ -13,7 +13,6 @@ use fuser::MountOption;
 use rand::Rng;
 use std::io::{Read, Write, Seek, SeekFrom};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 
 static RUNNING: AtomicBool = AtomicBool::new(true);
 
