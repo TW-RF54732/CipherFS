@@ -8,7 +8,7 @@ use std::io::Write;
 use std::os::unix::fs::FileExt;
 use std::path::Path;
 
-const MAX_INDEX_SIZE: u64 = 512 * 1024 * 1024; // 512MB limit
+const MAX_INDEX_SIZE: u64 = 4 * 1024 * 1024 * 1024; // 4GB limit
 
 pub fn extract(container_path: &Path, output_dir: &Path, password: &str) -> Result<()> {
     println!("[Info] Opening container {}...", container_path.display());

@@ -13,7 +13,7 @@ use std::path::Path;
 use std::time::{Duration, UNIX_EPOCH};
 
 const TTL: Duration = Duration::from_secs(1);
-const MAX_INDEX_SIZE: u64 = 512 * 1024 * 1024; // 512MB limit
+const MAX_INDEX_SIZE: u64 = 4 * 1024 * 1024 * 1024; // 4GB limit
 
 pub struct CipherFS {
     file: File,
