@@ -74,18 +74,39 @@ fn main() -> Result<()> {
     match cli.command {
         Commands::Update => {
             println!("[Info] Checking for updates...");
-            let status = self_update::backends::github::Update::configure()
+            let updater = self_update::backends::github::Update::configure()
                 .repo_owner("TW-RF54732")
                 .repo_name("cipherfs")
                 .bin_name("cipherfs")
                 .show_download_progress(true)
                 .current_version(env!("CARGO_PKG_VERSION"))
                 .build()
-                .map_err(|e| anyhow::anyhow!("Update configuration failed: {}", e))?
-                .update()
-                .map_err(|e| anyhow::anyhow!("Update failed: {}", e))?;
-            
-            println!("[Success] Update status: `{}`!", status.version());
+                .map_err(|e| anyhow::anyhow!("Update configuration failed: {}", e))?;
+
+            let latest = updater.get_latest_release()
+                .map_err(|e| anyhow::anyhow!("Failed to fetch latest release: {}", e))?;
+
+            if self_update::version::bump_is_greater(env!("CARGO_PKG_VERSION"), &latest.version)? {
+                println!("\n[Info] New version available: {} (Current: {})", latest.version, env!("CARGO_PKG_VERSION"));
+                println!("--- Release Notes ---\n{}\n---------------------", latest.body.as_deref().unwrap_or("No notes available."));
+                
+                print!("\nDo you want to update to {}? [y/N]: ", latest.version);
+                std::io::stdout().flush()?;
+                
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input)?;
+                
+                if input.trim().to_lowercase() == "y" {
+                    println!("[Info] Starting update...");
+                    let status = updater.update()
+                        .map_err(|e| anyhow::anyhow!("Update failed: {}", e))?;
+                    println!("[Success] Update status: `{}`!", status.version());
+                } else {
+                    println!("[Info] Update cancelled.");
+                }
+            } else {
+                println!("[Info] Already up to date (Version: {}).", env!("CARGO_PKG_VERSION"));
+            }
             return Ok(());
         }
         Commands::Pack { source, output, m_cost, t_cost, p_cost, max_index } => {
