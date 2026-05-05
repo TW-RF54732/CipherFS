@@ -88,7 +88,7 @@ impl Filesystem for CipherFS {
                 return;
             }
         }
-        reply.error(libc::ENOENT.into());
+        reply.error(std::io::Error::from_raw_os_error(libc::ENOENT).into());
     }
 
     fn getattr(&self, _req: &Request, ino: INodeNo, _fh: Option<FileHandle>, reply: ReplyAttr) {
@@ -96,7 +96,7 @@ impl Filesystem for CipherFS {
             let attr = inode_to_attr(ino.into(), inode);
             reply.attr(&TTL, &attr);
         } else {
-            reply.error(libc::ENOENT.into());
+            reply.error(std::io::Error::from_raw_os_error(libc::ENOENT).into());
         }
     }
 
@@ -126,10 +126,10 @@ impl Filesystem for CipherFS {
                 }
                 reply.ok();
             } else {
-                reply.error(libc::ENOTDIR.into());
+                reply.error(std::io::Error::from_raw_os_error(libc::ENOTDIR).into());
             }
         } else {
-            reply.error(libc::ENOENT.into());
+            reply.error(std::io::Error::from_raw_os_error(libc::ENOENT).into());
         }
     }
 
@@ -181,7 +181,7 @@ impl Filesystem for CipherFS {
             
             reply.data(&result);
         } else {
-            reply.error(libc::ENOENT.into());
+            reply.error(std::io::Error::from_raw_os_error(libc::ENOENT).into());
         }
     }
 }
