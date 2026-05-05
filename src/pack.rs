@@ -9,7 +9,6 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Write, BufWriter};
 use std::path::Path;
-use std::sync::Arc;
 use walkdir::WalkDir;
 
 pub fn pack(
@@ -35,7 +34,6 @@ pub fn pack(
 
     println!("[Info] Found {} files ({} bytes).", entries.len(), total_size);
 
-    // 1. Prepare Keys
     let mut salt = [0u8; 16];
     rand::rng().fill_bytes(&mut salt);
     let argon2_params = Argon2Params::default();
@@ -57,11 +55,10 @@ pub fn pack(
         [0u8; 32]
     };
 
-    // 2. Build Index and Calculate Offsets
     let mut root = Inode::Directory {
         ino: 1,
         parent_ino: 1,
-        entries: Arc::new(HashMap::new()),
+        entries: HashMap::new(),
     };
 
     let mut current_offset = 0u64;
@@ -85,92 +82,63 @@ pub fn pack(
         index_size,
     };
 
-    // 3. Write to File
-    if output_file.is_dir() {
-        anyhow::bail!("Output path {} is a directory, not a file.", output_file.display());
-    }
-    let out_file = File::create(output_file).context(format!("Failed to create output file: {}", output_file.display()))?;
+    let out_file = File::create(output_file).context("Failed to create output file")?;
     let mut writer = BufWriter::new(out_file);
 
-    // Header (Fixed Size)
     let header_bytes = rmp_serde::to_vec(&header)?;
-    if header_bytes.len() > crate::layout::HEADER_SIZE {
-        anyhow::bail!("Header size exceeds reserved space!");
-    }
     let mut padded_header = [0u8; crate::layout::HEADER_SIZE];
     padded_header[..header_bytes.len()].copy_from_slice(&header_bytes);
     writer.write_all(&padded_header)?;
-
-    // Encrypted Index
     writer.write_all(&encrypted_index)?;
 
-    // Data Blocks
     println!("[Info] Packing Data Blocks...");
     let pb = ProgressBar::new(total_size);
     pb.set_style(ProgressStyle::default_bar()
         .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")?
         .progress_chars("#>-"));
 
-    let mut total_written = 0u64;
     let mut chunk_index = 0u64;
-    
-    const BATCH_SIZE: usize = 8; 
-    let mut current_batch = Vec::with_capacity(BATCH_SIZE);
+    let mut buffer = Vec::with_capacity(CHUNK_SIZE);
+    let mut total_processed = 0u64;
+
     for (_rel_path, _size, abs_path) in &entries {
         let mut file = File::open(abs_path)?;
+        let mut file_buf = vec![0u8; 64 * 1024]; // 64KB read buffer
         loop {
-            let mut chunk = vec![0u8; CHUNK_SIZE];
-            let n = file.read(&mut chunk)?;
+            let n = file.read(&mut file_buf)?;
             if n == 0 { break; }
             
-            if n < CHUNK_SIZE {
-                chunk.truncate(n);
-            }
-            
-            current_batch.push((chunk_index, chunk));
-            chunk_index += 1;
+            let mut pos = 0;
+            while pos < n {
+                let keep = std::cmp::min(n - pos, CHUNK_SIZE - buffer.len());
+                buffer.extend_from_slice(&file_buf[pos..pos+keep]);
+                pos += keep;
 
-            if current_batch.len() == BATCH_SIZE {
-                process_batch(&mut writer, &current_batch, &dek, &master_nonce, &pb, &mut total_written)?;
-                current_batch.clear();
+                if buffer.len() == CHUNK_SIZE {
+                    let nonce = derive_chunk_nonce(&master_nonce, chunk_index);
+                    let encrypted = encrypt_data(&dek, &nonce, &buffer)?;
+                    writer.write_all(&encrypted)?;
+                    chunk_index += 1;
+                    total_processed += buffer.len() as u64;
+                    pb.set_position(total_processed);
+                    buffer.clear();
+                }
             }
         }
     }
 
-    if !current_batch.is_empty() {
-        process_batch(&mut writer, &current_batch, &dek, &master_nonce, &pb, &mut total_written)?;
+    if !buffer.is_empty() {
+        let nonce = derive_chunk_nonce(&master_nonce, chunk_index);
+        let encrypted = encrypt_data(&dek, &nonce, &buffer)?;
+        writer.write_all(&encrypted)?;
+        total_processed += buffer.len() as u64;
+        pb.set_position(total_processed);
     }
     
     pb.finish_with_message("Done");
     writer.flush()?;
 
     println!("[Success] {} created.", output_file.display());
-    Ok(())
-}
-
-fn process_batch<W: Write>(
-    writer: &mut W,
-    batch: &[(u64, Vec<u8>)],
-    dek: &[u8; 32],
-    master_nonce: &[u8; 32],
-    pb: &ProgressBar,
-    total_written: &mut u64,
-) -> Result<()> {
-    let encrypted_batch: Vec<Result<Vec<u8>>> = batch
-        .into_par_iter()
-        .map(|(idx, data)| {
-            let nonce = derive_chunk_nonce(master_nonce, *idx);
-            encrypt_data(dek, &nonce, data)
-        })
-        .collect();
-
-    for (i, res) in encrypted_batch.into_iter().enumerate() {
-        let encrypted = res?;
-        writer.write_all(&encrypted)?;
-        let original_size = batch[i].1.len() as u64;
-        *total_written += original_size;
-        pb.set_position(*total_written);
-    }
     Ok(())
 }
 
@@ -190,7 +158,7 @@ fn add_to_index(
 
         if i == components.len() - 1 {
             if let Inode::Directory { entries, .. } = current {
-                Arc::make_mut(entries).insert(
+                entries.insert(
                     name,
                     Inode::File {
                         ino: *ino_counter,
@@ -203,13 +171,13 @@ fn add_to_index(
             }
         } else {
             if let Inode::Directory { entries, .. } = current {
-                current = Arc::make_mut(entries).entry(name).or_insert_with(|| {
-                    let new_ino = *ino_counter;
+                let next_ino = *ino_counter;
+                current = entries.entry(name).or_insert_with(|| {
                     *ino_counter += 1;
                     Inode::Directory {
-                        ino: new_ino,
+                        ino: next_ino,
                         parent_ino: current_ino,
-                        entries: Arc::new(HashMap::new()),
+                        entries: HashMap::new(),
                     }
                 });
             }

@@ -8,16 +8,18 @@ mod pack;
 use anyhow::{Result, Context};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
-#[cfg(unix)]
 use crate::mount::CipherFS;
-#[cfg(unix)]
 use fuser::MountOption;
 use rand::Rng;
 use std::io::{Read, Write, Seek, SeekFrom};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
+static RUNNING: AtomicBool = AtomicBool::new(true);
 
 #[derive(Parser)]
 #[command(name = "cipherfs")]
-#[command(about = "CipherFS: Read-only encrypted virtual filesystem", long_about = None)]
+#[command(about = "CipherFS: Read-only encrypted virtual filesystem (Linux Only)", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -90,75 +92,45 @@ fn main() -> Result<()> {
             extract::extract(&container, &output, &password)?;
         }
         Commands::Mount { container, mountpoint } => {
-            #[cfg(unix)]
-            {
-                let password = rpassword::prompt_password("Enter Password: ")?;
-                
-                // 1. Try to open for duress wipe check (needs write if hash matches)
-                // If we only have read access, skip the wipe check or warn
-                if let Err(e) = check_duress_and_wipe(&container, &password) {
-                    eprintln!("[Warning] Could not check/perform duress wipe: {}. Continuing in Read-Only mode.", e);
-                }
-
-                let fs = CipherFS::new(&container, &password)?;
-
-                // Robust mountpoint check
-                if !mountpoint.exists() {
-                    println!("[Info] Creating mount point {}...", mountpoint.display());
-                    std::fs::create_dir_all(&mountpoint).context("Failed to create mount point directory")?;
-                } else if !mountpoint.is_dir() {
-                    anyhow::bail!("Mount point {} exists but is not a directory.", mountpoint.display());
-                }
-
-                println!("[Info] Mounting CipherFS at {}...", mountpoint.display());
-                
-                let options = vec![
-                    MountOption::RO,
-                    MountOption::FSName("cipherfs".to_string()),
-                ];
-                let mut config = fuser::Config::default();
-                config.mount_options = options;
-                
-                // Use spawn_mount2 to run FUSE in a background thread
-                let _session = fuser::spawn_mount2(fs, &mountpoint, &config)
-                    .context("FUSE mount failed")?;
-
-                println!("[Success] CipherFS is mounted and ready.");
-                println!("[Info] Press Ctrl+C to unmount and exit.");
-
-                // Set up signal handling for elegant unmount
-                use std::sync::atomic::{AtomicBool, Ordering};
-                use std::sync::Arc;
-                
-                let running = Arc::new(AtomicBool::new(true));
-                let r = running.clone();
-                
-                // Use libc to handle signals since we already depend on it
-                extern "C" fn handle_signal(_: libc::c_int) {
-                    // We can't easily change the AtomicBool from a C-style signal handler
-                    // without a static global, so we'll just exit, 
-                    // but we want the drop() of _session to run.
-                    // The most robust way in a simple CLI is a loop with sleep or a dedicated signal crate.
-                    // Since we want to avoid adding deps, we'll use a simple approach.
-                    std::process::exit(0);
-                }
-
-                unsafe {
-                    libc::signal(libc::SIGINT, handle_signal as libc::sighandler_t);
-                    libc::signal(libc::SIGTERM, handle_signal as libc::sighandler_t);
-                }
-
-                while running.load(Ordering::SeqCst) {
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-                }
-                
-                // When _session is dropped here, it will attempt to unmount.
+            let password = rpassword::prompt_password("Enter Password: ")?;
+            
+            if let Err(e) = check_duress_and_wipe(&container, &password) {
+                eprintln!("[Warning] Could not check/perform duress wipe: {}. Continuing.", e);
             }
-            #[cfg(not(unix))]
-            {
-                let _ = (container, mountpoint);
-                anyhow::bail!("Mounting is only supported on Unix platforms.");
+
+            let fs = CipherFS::new(&container, &password)?;
+
+            if !mountpoint.exists() {
+                println!("[Info] Creating mount point {}...", mountpoint.display());
+                std::fs::create_dir_all(&mountpoint).context("Failed to create mount point directory")?;
             }
+
+            println!("[Info] Mounting CipherFS at {}...", mountpoint.display());
+            
+            let options = vec![
+                MountOption::RO,
+                MountOption::FSName("cipherfs".to_string()),
+            ];
+            let mut config = fuser::Config::default();
+            config.mount_options = options;
+            
+            let _session = fuser::spawn_mount2(fs, &mountpoint, &config)
+                .context("FUSE mount failed")?;
+
+            println!("[Success] CipherFS is mounted and ready.");
+            println!("[Info] Press Ctrl+C to unmount and exit.");
+
+            unsafe {
+                libc::signal(libc::SIGINT, handle_signal as libc::sighandler_t);
+                libc::signal(libc::SIGTERM, handle_signal as libc::sighandler_t);
+            }
+
+            while RUNNING.load(Ordering::SeqCst) {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            
+            println!("\n[Info] Unmounting...");
+            // _session drop will unmount automatically
         }
         Commands::Passwd { container } => {
             let old_password = rpassword::prompt_password("Enter Current Password: ")?;
@@ -182,7 +154,6 @@ fn main() -> Result<()> {
             }
 
             println!("[Info] Re-encrypting Vault...");
-            // Generate new salt and re-encrypt DEK
             let mut new_salt = [0u8; 16];
             rand::rng().fill_bytes(&mut new_salt);
             header.salt = new_salt;
@@ -206,12 +177,21 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+extern "C" fn handle_signal(_: libc::c_int) {
+    RUNNING.store(false, Ordering::SeqCst);
+}
+
 fn check_duress_and_wipe(container: &std::path::Path, password: &str) -> Result<()> {
     use std::fs::OpenOptions;
     use crate::layout::{Header, MAGIC_BYTES, HEADER_SIZE};
     use crate::crypto::hash_duress_password;
 
-    let mut file = OpenOptions::new().read(true).open(container)?;
+    let file_res = OpenOptions::new().read(true).open(container);
+    let mut file = match file_res {
+        Ok(f) => f,
+        Err(_) => return Ok(()),
+    };
+
     let mut buffer = [0u8; HEADER_SIZE];
     if file.read_exact(&mut buffer).is_err() { return Ok(()); }
     
@@ -230,16 +210,12 @@ fn check_duress_and_wipe(container: &std::path::Path, password: &str) -> Result<
     if header.duress_hash != [0u8; 32] && header.duress_hash == input_hash {
         println!("[Error] Duress password detected! Wiping Data Encryption Key...");
         
-        // Reopen for writing
         let mut file = OpenOptions::new().write(true).open(container)?;
         
         let mut new_header = header;
         rand::rng().fill_bytes(&mut new_header.encrypted_dek);
         
         let header_bytes = rmp_serde::to_vec(&new_header)?;
-        if header_bytes.len() > HEADER_SIZE {
-            anyhow::bail!("Header size exceeds reserved space during wipe!");
-        }
         let mut padded_header = [0u8; HEADER_SIZE];
         padded_header[..header_bytes.len()].copy_from_slice(&header_bytes);
 
