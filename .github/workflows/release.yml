@@ -45,6 +45,8 @@ jobs:
       - name: Build Tauri App
         run: cargo tauri build
         working-directory: ./gui
+        env:
+          BINDGEN_EXTRA_CLANG_ARGS: "-D_IO_STATUS_BLOCK=struct _IO_STATUS_BLOCK"
       - name: Upload MSI
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
