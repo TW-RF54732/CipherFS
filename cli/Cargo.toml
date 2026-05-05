@@ -1,0 +1,17 @@
+[package]
+name = "cipherfs-cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+cipherfs-core = { path = "../core" }
+anyhow = "1.0.102"
+clap = { version = "4.6.1", features = ["derive"] }
+fuser = "0.17.0"
+indicatif = "0.18.4"
+libc = "0.2.186"
+rpassword = "7.5.2"
+ctrlc = "3.4.5"
+rmp-serde = "1.3.1"
+rand = "0.10.1"
+parking_lot = "0.12.5"

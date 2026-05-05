@@ -1,0 +1,22 @@
+[package]
+name = "cipherfs-gui"
+version = "0.1.0"
+edition = "2024"
+
+[build-dependencies]
+tauri-build = { version = "1.5", features = [] }
+
+[dependencies]
+cipherfs-core = { path = "../core" }
+tauri = { version = "1.6", features = ["api-all", "shell-open"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+anyhow = "1.0.102"
+rpassword = "7.5.2"
+parking_lot = "0.12.5"
+
+# Windows 專屬依賴：當目標是 Windows 時才引入
+[target.'cfg(windows)'.dependencies]
+# 我們將在 Windows 下使用 WinFsp 的 Rust 綁定
+# 注意：用戶機器需安裝 WinFsp 驅動
+winfsp = "0.1.0" 

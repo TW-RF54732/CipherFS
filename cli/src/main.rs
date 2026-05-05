@@ -1,8 +1,4 @@
-mod crypto;
-mod index;
-mod layout;
 mod mount;
-mod pack;
 
 use anyhow::{Result, Context};
 use clap::{Parser, Subcommand};
@@ -10,6 +6,7 @@ use std::path::PathBuf;
 use crate::mount::CipherFS;
 use fuser::MountOption;
 use rand::Rng;
+use cipherfs_core::{pack, layout::{self, Header, MAGIC_BYTES}, crypto::{self, hash_duress_password}};
 
 #[derive(Parser)]
 #[command(name = "cipherfs")]
@@ -73,7 +70,6 @@ fn main() -> Result<()> {
             let password = rpassword::prompt_password("Enter Password: ")?;
             
             // 1. Try to open for duress wipe check (needs write if hash matches)
-            // If we only have read access, skip the wipe check or warn
             if let Err(e) = check_duress_and_wipe(&container, &password) {
                 eprintln!("[Warning] Could not check/perform duress wipe: {}. Continuing in Read-Only mode.", e);
             }
@@ -91,18 +87,29 @@ fn main() -> Result<()> {
             }
 
             println!("[Info] Mounting CipherFS at {}...", mountpoint.display());
-            println!("[Info] Press Ctrl+C to unmount.");
             
             let options = vec![
                 MountOption::RO,
                 MountOption::FSName("cipherfs".to_string()),
-                MountOption::AutoUnmount,
             ];
             
             let mut config = fuser::Config::default();
             config.mount_options = options;
             
-            fuser::mount2(fs, mountpoint, &config).context("FUSE mount failed")?;
+            let _session = fuser::spawn_mount2(fs, &mountpoint, &config).context("FUSE mount failed")?;
+            
+            println!("[Success] Vault is active.");
+            println!("[Info] Press Ctrl+C to unmount and exit.");
+
+            // Keep the main thread alive until interrupted
+            let (tx, rx) = std::sync::mpsc::channel();
+            ctrlc::set_handler(move || {
+                let _ = tx.send(());
+            }).context("Error setting Ctrl-C handler")?;
+
+            rx.recv().ok();
+            println!("\n[Info] Unmounting safely...");
+            // _session is dropped here, which triggers unmount
         }
         Commands::Passwd { .. } => {
             println!("Passwd command not yet implemented.");
@@ -115,8 +122,6 @@ fn main() -> Result<()> {
 fn check_duress_and_wipe(container: &std::path::Path, password: &str) -> Result<()> {
     use std::fs::OpenOptions;
     use std::io::{Read, Write, Seek, SeekFrom};
-    use crate::layout::{Header, MAGIC_BYTES};
-    use crate::crypto::hash_duress_password;
 
     let mut file = OpenOptions::new().read(true).open(container)?;
     let mut buffer = [0u8; 1024];

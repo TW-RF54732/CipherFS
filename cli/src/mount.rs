@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
-use crate::crypto::*;
-use crate::index::Inode;
-use crate::layout::{Header, CHUNK_SIZE, MAGIC_BYTES};
+use cipherfs_core::crypto::*;
+use cipherfs_core::index::Inode;
+use cipherfs_core::layout::{Header, CHUNK_SIZE, MAGIC_BYTES};
 use fuser::{
     FileAttr, FileType, Filesystem, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry, Request,
     INodeNo, FileHandle, Generation, OpenFlags, LockOwner,

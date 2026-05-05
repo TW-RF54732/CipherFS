@@ -1,0 +1,34 @@
+{
+  "build": {
+    "distDir": ".",
+    "devPath": "index.html",
+    "beforeDevCommand": "",
+    "beforeBuildCommand": ""
+  },
+  "package": {
+    "productName": "CipherFS",
+    "version": "0.1.0"
+  },
+  "tauri": {
+    "allowlist": {
+      "all": true
+    },
+    "bundle": {
+      "active": true,
+      "targets": ["msi"],
+      "identifier": "com.cipherfs.app"
+    },
+    "security": {
+      "csp": null
+    },
+    "windows": [
+      {
+        "fullscreen": false,
+        "height": 600,
+        "resizable": false,
+        "title": "CipherFS Desktop",
+        "width": 450
+      }
+    ]
+  }
+}

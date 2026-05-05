@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CipherFS Desktop</title>
+    <style>
+        body { font-family: sans-serif; background: #1a1a1a; color: #eee; display: flex; flex-direction: column; align-items: center; padding: 2rem; }
+        .card { background: #2a2a2a; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); width: 100%; max-width: 400px; }
+        h1 { font-size: 1.5rem; margin-bottom: 1.5rem; color: #00d4ff; text-align: center; }
+        .input-group { margin-bottom: 1rem; }
+        label { display: block; margin-bottom: 0.5rem; font-size: 0.9rem; }
+        input { width: 100%; padding: 0.8rem; border-radius: 4px; border: 1px solid #444; background: #333; color: #fff; box-sizing: border-box; }
+        button { width: 100%; padding: 1rem; margin-top: 1rem; border: none; border-radius: 4px; background: #00d4ff; color: #1a1a1a; font-weight: bold; cursor: pointer; transition: 0.2s; }
+        button:hover { background: #00b8e6; }
+        #status { margin-top: 1rem; font-size: 0.8rem; color: #aaa; text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>CipherFS</h1>
+        <div class="input-group">
+            <label>Source / Container Path</label>
+            <input type="text" id="path" placeholder="C:\Users\Name\Desktop\D-Drive">
+        </div>
+        <div class="input-group">
+            <label>Password</label>
+            <input type="password" id="password" placeholder="••••••••">
+        </div>
+        <button onclick="pack()">Pack Folder</button>
+        <button onclick="mount()" style="background: #4caf50; color: white;">Mount Vault</button>
+        <div id="status">Ready</div>
+    </div>
+
+    <script>
+        const { invoke } = window.__TAURI__.tauri;
+        const statusEl = document.getElementById('status');
+
+        async function pack() {
+            const path = document.getElementById('path').value;
+            const password = document.getElementById('password').value;
+            statusEl.innerText = 'Packing... (D-Drive returning to dust)';
+            try {
+                const res = await invoke('pack_vault', { source: path, password: password });
+                statusEl.innerText = res;
+            } catch (err) {
+                statusEl.innerText = 'Error: ' + err;
+            }
+        }
+
+        async function mount() {
+            const path = document.getElementById('path').value;
+            const password = document.getElementById('password').value;
+            statusEl.innerText = 'Mounting...';
+            try {
+                // Windows uses drive letters, but we'll let the backend decide
+                const res = await invoke('mount_vault', { container: path, mountpoint: 'Z:', password: password });
+                statusEl.innerText = res;
+            } catch (err) {
+                statusEl.innerText = 'Error: ' + err;
+            }
+        }
+    </script>
+</body>
+</html>
