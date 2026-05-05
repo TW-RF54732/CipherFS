@@ -1,61 +1,68 @@
 # CipherFS
 
-CipherFS is a high-performance, read-only encrypted virtual filesystem (FUSE) implemented in Rust. It is designed for securing TB-scale data storage with a focus on random access efficiency and duress protection.
+CipherFS 是一款專為 Linux 設計的高性能、唯讀加密虛擬檔案系統 (FUSE)。它專注於大規模數據存取的效率，並內建了強大的「脅迫防禦」機制。
 
-## Core Features
+## 核心特性
 
-### Security Architecture
-- KDF: Argon2 is utilized for strong key derivation from master passwords.
-- Encryption: ChaCha20-Poly1305 (AEAD) provides high-performance authenticated encryption, ideal for software-based decryption.
-- Key Management: Separated Data Encryption Key (DEK) and Key Encryption Key (KEK) allow for password changes without re-encrypting the entire archive.
+### 安全架構
+- **KDF**: 使用 Argon2id 進行高強度金鑰衍生。
+- **加密算法**: 使用 ChaCha20-Poly1305 (AEAD) 提供高性能且具備完整性驗證的加密。
+- **金鑰管理**: 分離資料金鑰 (DEK) 與主金鑰 (KEK)，更換密碼無需重新加密所有資料。
 
-### Performance and Scalability
-- Parallel Processing: High-speed packing engine using Rayon for multi-threaded encryption of 4MB data chunks.
-- Random Access: Fixed-size chunking and independent nonce derivation enable instant seeking and partial decryption.
-- Memory Efficiency: Optimized index mapping using Arc-based directory trees to handle millions of files with minimal footprint.
+### 高性能與擴展性
+- **並行處理**: 採用 Linux 專有的並行讀取技術，徹底消除 FUSE 讀取瓶頸。
+- **隨機存取**: 4MB 固定區塊設計與獨立 Nonce 衍生，實現秒級隨機尋址與局部解密。
+- **低負載索引**: 優化的平坦索引映射，輕鬆處理數百萬級別檔案。
 
-### Duress Protection
-- Duress Password: A secondary password that, when entered, triggers immediate and silent destruction of the Data Encryption Key.
-- Neutralization: Once triggered, the vault becomes permanently inaccessible, providing a "scorched earth" security layer under coercion.
+### 脅迫保護 (Duress Protection)
+- **脅迫密碼**: 支援設定第二組「脅迫密碼」，輸入後將立即且安靜地銷毀資料金鑰 (DEK)。
+- **物理中和**: 一旦觸發，該容器將永遠無法解碼，為極端情況提供「焦土策略」級別的安全保障。
 
-### FUSE Integration
-- Userspace Mounting: Integrated with the fuser crate for standard filesystem interaction.
-- Stability: Implements automatic unmounting and robust mount point handling to prevent stale mount endpoints.
+### CLI 工具功能
+- **自動更新**: 內建 `update` 指令，可直接從 GitHub 獲取最新穩定版。
+- **優雅卸載**: 整合 Linux 信號處理，支援 Ctrl+C 自動安全卸載。
 
-## Installation
+## 安裝
 
-Ensure you have the Rust toolchain and FUSE3 libraries installed on your Linux system.
+CipherFS 專為 Linux 平台設計，請確保您的系統已安裝 `fuse3` 與 `libfuse3-dev`。
 
+### 從穩定版下載 (推薦)
+1. 前往 [Releases](https://github.com/TW-RF54732/CipherFS/releases) 下載最新的二進位檔。
+2. 賦予執行權限：`chmod +x cipherfs`。
+
+### 從原始碼編譯
 ```bash
 cargo build --release
 ```
 
-## Usage
+## 使用方法
 
-### Packing a Directory
-To create an encrypted container from a source directory:
-
+### 打包目錄 (Pack)
 ```bash
-./target/release/CipherFS pack <source_directory> [output_file]
+./cipherfs pack <source_directory> [output_file]
 ```
-If the output file is not specified, it defaults to `source_name.cfs`.
 
-### Mounting a Container
-To mount a container to a local directory:
-
+### 掛載容器 (Mount)
 ```bash
-./target/release/CipherFS mount <container.cfs> <mount_point>
+./cipherfs mount <container.cfs> <mount_point>
 ```
-The filesystem is mounted as read-only. Use Ctrl+C to unmount gracefully.
+掛載後為唯讀模式。按 **Ctrl+C** 即可優雅卸載。
 
-## Technical Details
+### 提取資料 (Extract)
+```bash
+./cipherfs extract <container.cfs> <output_dir>
+```
 
-- Chunk Size: 4,096 KB
-- Header Format: Magic Bytes, Salt, Argon2 Parameters, Master Nonce, Duress Hash, Encrypted DEK Slot, Index Size.
-- Inode Mapping: Deterministic 64-bit inodes derived from parent-child relationship hashes.
+### 自動更新 (Update)
+```bash
+./cipherfs update
+```
 
-## Platform Support
+## 平台支援
 
-- Primary: Linux (with FUSE3)
-- Experimental: macOS (requires macFUSE)
-- Windows: Support via WSL2 or cross-platform extract tools (planned).
+- **原生支援**: Linux (核心版本 5.4+ 推薦)
+- **依賴**: FUSE3
+
+## 授權
+
+MIT License

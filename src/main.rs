@@ -52,12 +52,30 @@ enum Commands {
         /// CipherFS container (.cfs)
         container: PathBuf,
     },
+    /// Update cipherfs to the latest version from GitHub
+    Update,
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Commands::Update => {
+            println!("[Info] Checking for updates...");
+            let status = self_update::backends::github::Update::configure()
+                .repo_owner("TW-RF54732")
+                .repo_name("CipherFS")
+                .bin_name("cipherfs")
+                .show_download_progress(true)
+                .current_version(env!("CARGO_PKG_VERSION"))
+                .build()
+                .map_err(|e| anyhow::anyhow!("Update configuration failed: {}", e))?
+                .update()
+                .map_err(|e| anyhow::anyhow!("Update failed: {}", e))?;
+            
+            println!("[Success] Update status: `{}`!", status.version());
+            return Ok(());
+        }
         Commands::Pack { source, output } => {
             let output = match output {
                 Some(p) => p,

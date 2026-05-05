@@ -3,6 +3,7 @@ name: CI/CD
 on:
   push:
     branches: [ "main" ]
+    tags: [ "v*" ]
   pull_request:
     branches: [ "main" ]
 
@@ -12,6 +13,8 @@ env:
 jobs:
   build_and_test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -140,6 +143,35 @@ jobs:
           EOF
           expect test_fail.exp
           echo "Duress wipe test passed!"
+
+      - name: Prepare Release Artifacts
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          cd target/release
+          tar -czvf cipherfs-linux-amd64.tar.gz cipherfs
+
+      - name: Extract Release Notes
+        if: startsWith(github.ref, 'refs/tags/v')
+        id: release_notes
+        run: |
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+          FILE_PATH="release_notes/${TAG_NAME}_release.md"
+          if [ -f "$FILE_PATH" ]; then
+            echo "notes<<EOF" >> $GITHUB_OUTPUT
+            cat "$FILE_PATH" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          else
+            echo "notes=Release $TAG_NAME" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          body: ${{ steps.release_notes.outputs.notes }}
+          files: |
+            target/release/cipherfs
+            target/release/cipherfs-linux-amd64.tar.gz
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4

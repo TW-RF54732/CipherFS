@@ -21,3 +21,4 @@ rpassword = "7.5.2"
 serde = { version = "1.0.228", features = ["derive"] }
 serde-big-array = "0.5.1"
 walkdir = "2.5.0"
+self_update = { version = "0.41", features = ["archive-tar"] }
