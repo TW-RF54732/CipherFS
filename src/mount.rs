@@ -12,7 +12,6 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::time::{Duration, UNIX_EPOCH};
 use parking_lot::Mutex;
-use std::hash::{Hash, Hasher};
 
 const TTL: Duration = Duration::from_secs(1);
 
@@ -28,12 +27,12 @@ impl CipherFS {
     pub fn new(cfs_path: &Path, password: &str) -> Result<Self> {
         let mut file = File::open(cfs_path)?;
         
-        let mut buffer = [0u8; 1024];
-        let _ = file.read(&mut buffer);
+        let mut buffer = [0u8; crate::layout::HEADER_SIZE];
+        file.read_exact(&mut buffer).context("Failed to read header")?;
         
         let mut cursor = std::io::Cursor::new(&buffer);
         let header: Header = rmp_serde::from_read(&mut cursor)?;
-        let header_size = cursor.position();
+        let header_size = crate::layout::HEADER_SIZE as u64;
 
         if header.magic != MAGIC_BYTES {
             anyhow::bail!("Not a CipherFS file or invalid version.");
@@ -56,7 +55,7 @@ impl CipherFS {
         let data_offset = header_size + header.index_size;
 
         let mut inode_map = HashMap::new();
-        inode_map.insert(1, index);
+        populate_inode_map(&mut inode_map, &index);
 
         Ok(Self {
             file: Mutex::new(file),
@@ -70,26 +69,23 @@ impl CipherFS {
     fn get_inode(&self, ino: u64) -> Option<Inode> {
         self.inode_map.lock().get(&ino).cloned()
     }
+}
 
-    fn assign_ino(&self, parent_ino: u64, name: &str, inode: &Inode) -> u64 {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        parent_ino.hash(&mut hasher);
-        name.hash(&mut hasher);
-        let ino = (hasher.finish() & 0x00FF_FFFF_FFFF_FFFF) | 0x0100_0000_0000_0000;
-        
-        let mut map = self.inode_map.lock();
-        map.entry(ino).or_insert_with(|| inode.clone());
-        ino
+fn populate_inode_map(map: &mut HashMap<u64, Inode>, inode: &Inode) {
+    map.insert(inode.ino(), inode.clone());
+    if let Inode::Directory { entries, .. } = inode {
+        for child in entries.values() {
+            populate_inode_map(map, child);
+        }
     }
 }
 
 impl Filesystem for CipherFS {
     fn lookup(&self, _req: &Request, parent: INodeNo, name: &std::ffi::OsStr, reply: ReplyEntry) {
         let name_str = name.to_str().unwrap_or("");
-        if let Some(Inode::Directory { entries }) = self.get_inode(parent.into()) {
+        if let Some(Inode::Directory { entries, .. }) = self.get_inode(parent.into()) {
             if let Some(inode) = entries.get(name_str) {
-                let ino = self.assign_ino(parent.into(), name_str, inode);
-                let attr = inode_to_attr(ino, inode);
+                let attr = inode_to_attr(inode.ino(), inode);
                 reply.entry(&TTL, &attr, Generation(0));
                 return;
             }
@@ -114,25 +110,26 @@ impl Filesystem for CipherFS {
         offset: u64,
         mut reply: ReplyDirectory,
     ) {
-        if let Some(Inode::Directory { entries }) = self.get_inode(ino.into()) {
-            let mut entries_vec: Vec<(u64, String, FileType)> = Vec::new();
-            entries_vec.push((ino.into(), ".".to_string(), FileType::Directory));
-            // parent of root is root (1)
-            let parent_ino = if ino.0 == 1 { 1 } else { 1 }; // simplified for now, ideally track parent
-            entries_vec.push((parent_ino, "..".to_string(), FileType::Directory));
-            
-            for (name, inode) in entries.iter() {
-                let kind = if inode.is_file() { FileType::RegularFile } else { FileType::Directory };
-                let child_ino = self.assign_ino(ino.into(), name, inode);
-                entries_vec.push((child_ino, name.clone(), kind));
-            }
-
-            for (i, (child_ino, name, kind)) in entries_vec.into_iter().enumerate().skip(offset as usize) {
-                if reply.add(INodeNo(child_ino), (i + 1) as u64, kind, name) {
-                    break;
+        if let Some(inode) = self.get_inode(ino.into()) {
+            if let Inode::Directory { entries, parent_ino, .. } = inode {
+                let mut entries_vec: Vec<(u64, String, FileType)> = Vec::new();
+                entries_vec.push((ino.into(), ".".to_string(), FileType::Directory));
+                entries_vec.push((parent_ino, "..".to_string(), FileType::Directory));
+                
+                for (name, child_inode) in entries.iter() {
+                    let kind = if child_inode.is_file() { FileType::RegularFile } else { FileType::Directory };
+                    entries_vec.push((child_inode.ino(), name.clone(), kind));
                 }
+
+                for (i, (child_ino, name, kind)) in entries_vec.into_iter().enumerate().skip(offset as usize) {
+                    if reply.add(INodeNo(child_ino), (i + 1) as u64, kind, name) {
+                        break;
+                    }
+                }
+                reply.ok();
+            } else {
+                reply.error(std::io::ErrorKind::NotADirectory.into());
             }
-            reply.ok();
         } else {
             reply.error(std::io::ErrorKind::NotFound.into());
         }
@@ -149,7 +146,7 @@ impl Filesystem for CipherFS {
         _lock_owner: Option<LockOwner>,
         reply: ReplyData,
     ) {
-        if let Some(Inode::File { size: file_size, offset: data_start_offset }) = self.get_inode(ino.into()) {
+        if let Some(Inode::File { size: file_size, offset: data_start_offset, .. }) = self.get_inode(ino.into()) {
             if offset >= file_size {
                 reply.data(&[]);
                 return;

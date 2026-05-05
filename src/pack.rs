@@ -59,12 +59,15 @@ pub fn pack(
 
     // 2. Build Index and Calculate Offsets
     let mut root = Inode::Directory {
+        ino: 1,
+        parent_ino: 1,
         entries: Arc::new(HashMap::new()),
     };
 
     let mut current_offset = 0u64;
+    let mut ino_counter = 2u64;
     for (rel_path, size, _abs_path) in &entries {
-        add_to_index(&mut root, rel_path, *size, current_offset)?;
+        add_to_index(&mut root, rel_path, *size, current_offset, &mut ino_counter)?;
         current_offset += *size;
     }
 
@@ -89,9 +92,14 @@ pub fn pack(
     let out_file = File::create(output_file).context(format!("Failed to create output file: {}", output_file.display()))?;
     let mut writer = BufWriter::new(out_file);
 
-    // Header
+    // Header (Fixed Size)
     let header_bytes = rmp_serde::to_vec(&header)?;
-    writer.write_all(&header_bytes)?;
+    if header_bytes.len() > crate::layout::HEADER_SIZE {
+        anyhow::bail!("Header size exceeds reserved space!");
+    }
+    let mut padded_header = [0u8; crate::layout::HEADER_SIZE];
+    padded_header[..header_bytes.len()].copy_from_slice(&header_bytes);
+    writer.write_all(&padded_header)?;
 
     // Encrypted Index
     writer.write_all(&encrypted_index)?;
@@ -108,31 +116,25 @@ pub fn pack(
     
     const BATCH_SIZE: usize = 8; 
     let mut current_batch = Vec::with_capacity(BATCH_SIZE);
-    let mut chunk_buffer = vec![0u8; CHUNK_SIZE];
-    let mut buffer_pos = 0;
-
     for (_rel_path, _size, abs_path) in &entries {
         let mut file = File::open(abs_path)?;
         loop {
-            let n = file.read(&mut chunk_buffer[buffer_pos..])?;
+            let mut chunk = vec![0u8; CHUNK_SIZE];
+            let n = file.read(&mut chunk)?;
             if n == 0 { break; }
-            buffer_pos += n;
+            
+            if n < CHUNK_SIZE {
+                chunk.truncate(n);
+            }
+            
+            current_batch.push((chunk_index, chunk));
+            chunk_index += 1;
 
-            if buffer_pos == CHUNK_SIZE {
-                current_batch.push((chunk_index, chunk_buffer.clone()));
-                chunk_index += 1;
-                buffer_pos = 0;
-
-                if current_batch.len() == BATCH_SIZE {
-                    process_batch(&mut writer, &current_batch, &dek, &master_nonce, &pb, &mut total_written)?;
-                    current_batch.clear();
-                }
+            if current_batch.len() == BATCH_SIZE {
+                process_batch(&mut writer, &current_batch, &dek, &master_nonce, &pb, &mut total_written)?;
+                current_batch.clear();
             }
         }
-    }
-
-    if buffer_pos > 0 {
-        current_batch.push((chunk_index, chunk_buffer[..buffer_pos].to_vec()));
     }
 
     if !current_batch.is_empty() {
@@ -172,20 +174,43 @@ fn process_batch<W: Write>(
     Ok(())
 }
 
-fn add_to_index(root: &mut Inode, path: &Path, size: u64, offset: u64) -> Result<()> {
+fn add_to_index(
+    root: &mut Inode,
+    path: &Path,
+    size: u64,
+    offset: u64,
+    ino_counter: &mut u64,
+) -> Result<()> {
     let components: Vec<_> = path.components().collect();
     let mut current = root;
 
     for (i, comp) in components.iter().enumerate() {
         let name = comp.as_os_str().to_str().context("Non-UTF8 path")?.to_string();
+        let current_ino = current.ino();
+
         if i == components.len() - 1 {
-            if let Inode::Directory { entries } = current {
-                Arc::make_mut(entries).insert(name, Inode::File { size, offset });
+            if let Inode::Directory { entries, .. } = current {
+                Arc::make_mut(entries).insert(
+                    name,
+                    Inode::File {
+                        ino: *ino_counter,
+                        parent_ino: current_ino,
+                        size,
+                        offset,
+                    },
+                );
+                *ino_counter += 1;
             }
         } else {
-            if let Inode::Directory { entries } = current {
-                current = Arc::make_mut(entries).entry(name).or_insert(Inode::Directory {
-                    entries: Arc::new(HashMap::new()),
+            if let Inode::Directory { entries, .. } = current {
+                current = Arc::make_mut(entries).entry(name).or_insert_with(|| {
+                    let new_ino = *ino_counter;
+                    *ino_counter += 1;
+                    Inode::Directory {
+                        ino: new_ino,
+                        parent_ino: current_ino,
+                        entries: Arc::new(HashMap::new()),
+                    }
                 });
             }
         }

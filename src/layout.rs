@@ -3,6 +3,7 @@ use serde_big_array::BigArray;
 
 pub const MAGIC_BYTES: [u8; 4] = [0x43, 0x46, 0x53, 0x01];
 pub const CHUNK_SIZE: usize = 4 * 1024 * 1024; // 4MB
+pub const HEADER_SIZE: usize = 512;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Header {
