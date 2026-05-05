@@ -25,8 +25,8 @@ enum Commands {
     Pack {
         /// Source directory to pack
         source: PathBuf,
-        /// Output .cfs file
-        output: PathBuf,
+        /// Output .cfs file (defaults to source_name.cfs)
+        output: Option<PathBuf>,
     },
     /// Mount a CipherFS container
     Mount {
@@ -47,6 +47,17 @@ fn main() -> Result<()> {
 
     match cli.command {
         Commands::Pack { source, output } => {
+            let output = match output {
+                Some(p) => p,
+                None => {
+                    let name = source.file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|s| format!("{}.cfs", s))
+                        .unwrap_or_else(|| "vault.cfs".to_string());
+                    PathBuf::from(name)
+                }
+            };
+
             let password = rpassword::prompt_password("Set Master Password: ")?;
             let verify = rpassword::prompt_password("Verify Master Password: ")?;
             if password != verify {
@@ -69,8 +80,14 @@ fn main() -> Result<()> {
 
             let fs = CipherFS::new(&container, &password)?;
             
-            if !mountpoint.exists() {
-                anyhow::bail!("Mount point {} does not exist.", mountpoint.display());
+            // Robust mountpoint check
+            if !mountpoint.is_dir() {
+                if mountpoint.exists() {
+                    anyhow::bail!("Mount point {} exists but is not a directory.", mountpoint.display());
+                } else {
+                    println!("[Info] Creating mount point {}...", mountpoint.display());
+                    std::fs::create_dir_all(&mountpoint).context("Failed to create mount point directory")?;
+                }
             }
 
             println!("[Info] Mounting CipherFS at {}...", mountpoint.display());
@@ -79,6 +96,7 @@ fn main() -> Result<()> {
             let options = vec![
                 MountOption::RO,
                 MountOption::FSName("cipherfs".to_string()),
+                MountOption::AutoUnmount,
             ];
             
             let mut config = fuser::Config::default();
