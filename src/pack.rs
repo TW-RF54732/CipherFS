@@ -15,6 +15,10 @@ pub fn pack(
     output_file: &Path,
     password: &str,
     duress_password: Option<&str>,
+    argon2_m_cost: u32,
+    argon2_t_cost: u32,
+    argon2_p_cost: u32,
+    max_index_size: u64,
 ) -> Result<()> {
     println!("[Info] Scanning {}...", source_dir.display());
 
@@ -35,7 +39,11 @@ pub fn pack(
 
     let mut salt = [0u8; 16];
     rand::rng().fill_bytes(&mut salt);
-    let argon2_params = Argon2Params::default();
+    let argon2_params = Argon2Params {
+        m_cost: argon2_m_cost,
+        t_cost: argon2_t_cost,
+        p_cost: argon2_p_cost,
+    };
     let kek = derive_kek(password, &salt, &argon2_params)?;
 
     let mut dek = [0u8; 32];
@@ -87,6 +95,7 @@ pub fn pack(
         duress_hash,
         encrypted_dek,
         index_size,
+        max_index_size,
     };
 
     let out_file = File::create(output_file).context("Failed to create output file")?;
@@ -110,7 +119,7 @@ pub fn pack(
 
     for (_rel_path, _size, abs_path) in &entries {
         let mut file = File::open(abs_path)?;
-        let mut file_buf = vec![0u8; 64 * 1024]; // 64KB read buffer
+        let mut file_buf = vec![0u8; 64 * 1024]; 
         loop {
             let n = file.read(&mut file_buf)?;
             if n == 0 { break; }

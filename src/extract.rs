@@ -8,8 +8,6 @@ use std::io::Write;
 use std::os::unix::fs::FileExt;
 use std::path::Path;
 
-const MAX_INDEX_SIZE: u64 = 4 * 1024 * 1024 * 1024; // 4GB limit
-
 pub fn extract(container_path: &Path, output_dir: &Path, password: &str) -> Result<()> {
     println!("[Info] Opening container {}...", container_path.display());
     let file = File::open(container_path)?;
@@ -25,9 +23,9 @@ pub fn extract(container_path: &Path, output_dir: &Path, password: &str) -> Resu
         anyhow::bail!("Not a CipherFS file or invalid version.");
     }
 
-    // Security: Check index size
-    if header.index_size > MAX_INDEX_SIZE || header.index_size > metadata.len() {
-        anyhow::bail!("Invalid or too large index size: {}", header.index_size);
+    // Use max_index_size from header
+    if header.index_size > header.max_index_size || header.index_size > metadata.len() {
+        anyhow::bail!("Invalid or too large index size: {} (Limit: {})", header.index_size, header.max_index_size);
     }
 
     let kek = derive_kek(password, &header.salt, &header.argon2_params)?;
@@ -47,7 +45,7 @@ pub fn extract(container_path: &Path, output_dir: &Path, password: &str) -> Resu
 
     let data_offset = (HEADER_SIZE as u64) + header.index_size;
 
-    // Iterative calculation of total size to prevent Stack Overflow
+    // Iterative calculation of total size
     let mut total_size = 0u64;
     let mut stack = vec![&root_index];
     while let Some(node) = stack.pop() {
@@ -69,19 +67,13 @@ pub fn extract(container_path: &Path, output_dir: &Path, password: &str) -> Resu
 
     let mut current_extracted = 0u64;
     
-    // Iterative extraction to prevent Stack Overflow
+    // Iterative extraction - NO Path Traversal Protection as requested
     let mut extract_stack = vec![(&root_index, output_dir.to_path_buf())];
     while let Some((node, current_path)) = extract_stack.pop() {
         match node {
             Inode::Directory { entries, .. } => {
                 fs::create_dir_all(&current_path)?;
                 for (name, child_inode) in entries.iter() {
-                    // Security: Path Traversal Check
-                    let name_path = Path::new(name);
-                    if name_path.components().any(|c| !matches!(c, std::path::Component::Normal(_))) {
-                        anyhow::bail!("Malicious path component detected: {}", name);
-                    }
-                    
                     let child_path = current_path.join(name);
                     extract_stack.push((child_inode, child_path));
                 }

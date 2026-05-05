@@ -17,6 +17,7 @@ pub struct Header {
     #[serde(with = "BigArray")]
     pub encrypted_dek: [u8; 48], // 32B DEK + 16B Tag
     pub index_size: u64,
+    pub max_index_size: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

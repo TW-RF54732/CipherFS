@@ -13,7 +13,6 @@ use std::path::Path;
 use std::time::{Duration, UNIX_EPOCH};
 
 const TTL: Duration = Duration::from_secs(1);
-const MAX_INDEX_SIZE: u64 = 4 * 1024 * 1024 * 1024; // 4GB limit
 
 pub struct CipherFS {
     file: File,
@@ -39,9 +38,9 @@ impl CipherFS {
             anyhow::bail!("Not a CipherFS file or invalid version.");
         }
 
-        // Security: Check index size to prevent OOM
-        if header.index_size > MAX_INDEX_SIZE || header.index_size > metadata.len() {
-            anyhow::bail!("Invalid or too large index size: {}", header.index_size);
+        // Security: Check index size from header limit
+        if header.index_size > header.max_index_size || header.index_size > metadata.len() {
+            anyhow::bail!("Invalid or too large index size: {} (Limit: {})", header.index_size, header.max_index_size);
         }
 
         let kek = derive_kek(password, &header.salt, &header.argon2_params)?;
@@ -60,7 +59,7 @@ impl CipherFS {
         let data_offset = header_size + header.index_size;
 
         let mut inode_map = HashMap::new();
-        // Iterative population of inode map to prevent Stack Overflow
+        // Iterative population
         let mut stack = vec![&index];
         while let Some(node) = stack.pop() {
             inode_map.insert(node.ino(), node.clone());

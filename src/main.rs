@@ -18,7 +18,7 @@ static RUNNING: AtomicBool = AtomicBool::new(true);
 
 #[derive(Parser)]
 #[command(name = "cipherfs")]
-#[command(about = "CipherFS: Read-only encrypted virtual filesystem (Linux Only)", long_about = None)]
+#[command(about = "CipherFS: High-performance read-only encrypted virtual filesystem (Linux Only)", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -30,8 +30,20 @@ enum Commands {
     Pack {
         /// Source directory to pack
         source: PathBuf,
-        /// Output .cfs file (defaults to source_name.cfs)
+        /// Output .cfs file
         output: Option<PathBuf>,
+        /// Argon2 m_cost (default: 65536)
+        #[arg(long, default_value_t = 65536)]
+        m_cost: u32,
+        /// Argon2 t_cost (default: 3)
+        #[arg(long, default_value_t = 3)]
+        t_cost: u32,
+        /// Argon2 p_cost (default: 4)
+        #[arg(long, default_value_t = 4)]
+        p_cost: u32,
+        /// Max index size in MB (default: 512)
+        #[arg(long, default_value_t = 512)]
+        max_index: u64,
     },
     /// Extract a CipherFS container to a directory
     Extract {
@@ -64,7 +76,7 @@ fn main() -> Result<()> {
             println!("[Info] Checking for updates...");
             let status = self_update::backends::github::Update::configure()
                 .repo_owner("TW-RF54732")
-                .repo_name("CipherFS")
+                .repo_name("cipherfs")
                 .bin_name("cipherfs")
                 .show_download_progress(true)
                 .current_version(env!("CARGO_PKG_VERSION"))
@@ -76,7 +88,7 @@ fn main() -> Result<()> {
             println!("[Success] Update status: `{}`!", status.version());
             return Ok(());
         }
-        Commands::Pack { source, output } => {
+        Commands::Pack { source, output, m_cost, t_cost, p_cost, max_index } => {
             let output = match output {
                 Some(p) => p,
                 None => {
@@ -97,13 +109,13 @@ fn main() -> Result<()> {
             let duress = rpassword::prompt_password("Set Duress Password (Optional, Enter to skip): ")?;
             let duress = if duress.is_empty() { None } else { Some(duress.as_str()) };
 
-            pack::pack(&source, &output, &password, duress)?;
+            pack::pack(&source, &output, &password, duress, m_cost, t_cost, p_cost, max_index * 1024 * 1024)?;
         }
         Commands::Extract { container, output } => {
             let password = rpassword::prompt_password("Enter Password: ")?;
             
             if let Err(e) = check_duress_and_wipe(&container, &password) {
-                eprintln!("[Warning] Could not check/perform duress wipe: {}. Continuing extraction.", e);
+                eprintln!("[Warning] Could not check/perform duress wipe: {}. Continuing.", e);
             }
 
             extract::extract(&container, &output, &password)?;
@@ -147,7 +159,6 @@ fn main() -> Result<()> {
             }
             
             println!("\n[Info] Unmounting...");
-            // _session drop will unmount automatically
         }
         Commands::Passwd { container } => {
             let old_password = rpassword::prompt_password("Enter Current Password: ")?;
@@ -175,7 +186,6 @@ fn main() -> Result<()> {
             rand::rng().fill_bytes(&mut new_salt);
             header.salt = new_salt;
             
-            // New random dek_nonce for security
             let mut new_dek_nonce = [0u8; 12];
             rand::rng().fill_bytes(&mut new_dek_nonce);
             header.dek_nonce = new_dek_nonce;
