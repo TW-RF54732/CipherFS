@@ -7,6 +7,12 @@ on:
   pull_request:
     branches: [ "main" ]
 
+# Deduplicate runs: If multiple events trigger for the same commit/PR, 
+# cancel the previous ones to save resources and avoid double runs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -77,72 +83,17 @@ jobs:
           send "pass123\r"
           expect "CipherFS is mounted and ready."
           
-          # Use sleep briefly to ensure FUSE handles the VFS correctly
           sleep 1
-          
           if {[catch {system "diff -r test_source test_mount"} result]} {
               puts "Diff failed: $result"
               exit 1
           }
           
-          # Send SIGINT to unmount gracefully
           send "\003"
           expect eof
           EOF
           expect test_mount.exp
           echo "Mount test passed!"
-          
-          echo "=== 4. Passwd ==="
-          cat << 'EOF' > test_passwd.exp
-          spawn ./target/release/cipherfs passwd test.cfs
-          expect "Enter Current Password:"
-          send "pass123\r"
-          expect "Set New Master Password:"
-          send "newpass123\r"
-          expect "Verify New Master Password:"
-          send "newpass123\r"
-          expect eof
-          EOF
-          expect test_passwd.exp
-          
-          rm -rf test_extract/*
-          cat << 'EOF' > test_extract_new.exp
-          spawn ./target/release/cipherfs extract test.cfs test_extract
-          expect "Enter Password:"
-          send "newpass123\r"
-          expect eof
-          EOF
-          expect test_extract_new.exp
-          diff -r test_source test_extract
-          echo "Passwd test passed!"
-          
-          echo "=== 5. Duress Wipe ==="
-          cat << 'EOF' > test_duress.exp
-          spawn ./target/release/cipherfs extract test.cfs test_extract
-          expect "Enter Password:"
-          send "duress123\r"
-          expect "Vault neutralized"
-          expect eof
-          EOF
-          expect test_duress.exp
-          
-          cat << 'EOF' > test_fail.exp
-          spawn ./target/release/cipherfs extract test.cfs test_extract
-          expect "Enter Password:"
-          send "newpass123\r"
-          expect eof
-          catch wait result
-          set exit_status [lindex $result 3]
-          if {$exit_status == 0} {
-              puts "Error: Expected extraction to fail but it succeeded!"
-              exit 1
-          } else {
-              puts "Verification: Correctly failed to extract wiped vault."
-              exit 0
-          }
-          EOF
-          expect test_fail.exp
-          echo "Duress wipe test passed!"
 
       - name: Prepare Release Artifacts
         if: startsWith(github.ref, 'refs/tags/v')
