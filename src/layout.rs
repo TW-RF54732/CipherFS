@@ -11,6 +11,8 @@ pub struct Header {
     pub salt: [u8; 16],
     pub argon2_params: Argon2Params,
     pub master_nonce: [u8; 32],
+    pub dek_nonce: [u8; 12],
+    pub index_nonce: [u8; 12],
     pub duress_hash: [u8; 32],
     #[serde(with = "BigArray")]
     pub encrypted_dek: [u8; 48], // 32B DEK + 16B Tag

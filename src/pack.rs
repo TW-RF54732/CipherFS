@@ -41,12 +41,18 @@ pub fn pack(
     let mut dek = [0u8; 32];
     rand::rng().fill_bytes(&mut dek);
 
-    let encrypted_dek_vec = encrypt_data(&kek, &[0u8; 12], &dek)?;
+    let mut dek_nonce = [0u8; 12];
+    rand::rng().fill_bytes(&mut dek_nonce);
+
+    let encrypted_dek_vec = encrypt_data(&kek, &dek_nonce, &dek)?;
     let mut encrypted_dek = [0u8; 48];
     encrypted_dek.copy_from_slice(&encrypted_dek_vec);
 
     let mut master_nonce = [0u8; 32];
     rand::rng().fill_bytes(&mut master_nonce);
+
+    let mut index_nonce = [0u8; 12];
+    rand::rng().fill_bytes(&mut index_nonce);
 
     let duress_hash = if let Some(dp) = duress_password {
         hash_duress_password(dp)
@@ -68,7 +74,7 @@ pub fn pack(
     }
 
     let serialized_index = rmp_serde::to_vec(&root)?;
-    let encrypted_index = encrypt_data(&dek, &[0u8; 12], &serialized_index)?;
+    let encrypted_index = encrypt_data(&dek, &index_nonce, &serialized_index)?;
     let index_size = encrypted_index.len() as u64;
 
     let header = Header {
@@ -76,6 +82,8 @@ pub fn pack(
         salt,
         argon2_params,
         master_nonce,
+        dek_nonce,
+        index_nonce,
         duress_hash,
         encrypted_dek,
         index_size,

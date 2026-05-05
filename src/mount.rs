@@ -13,6 +13,7 @@ use std::path::Path;
 use std::time::{Duration, UNIX_EPOCH};
 
 const TTL: Duration = Duration::from_secs(1);
+const MAX_INDEX_SIZE: u64 = 512 * 1024 * 1024; // 512MB limit
 
 pub struct CipherFS {
     file: File,
@@ -25,6 +26,7 @@ pub struct CipherFS {
 impl CipherFS {
     pub fn new(cfs_path: &Path, password: &str) -> Result<Self> {
         let file = File::open(cfs_path)?;
+        let metadata = file.metadata()?;
         
         let mut buffer = [0u8; crate::layout::HEADER_SIZE];
         file.read_exact_at(&mut buffer, 0).context("Failed to read header")?;
@@ -37,8 +39,13 @@ impl CipherFS {
             anyhow::bail!("Not a CipherFS file or invalid version.");
         }
 
+        // Security: Check index size to prevent OOM
+        if header.index_size > MAX_INDEX_SIZE || header.index_size > metadata.len() {
+            anyhow::bail!("Invalid or too large index size: {}", header.index_size);
+        }
+
         let kek = derive_kek(password, &header.salt, &header.argon2_params)?;
-        let dek_vec = decrypt_data(&kek, &[0u8; 12], &header.encrypted_dek)
+        let dek_vec = decrypt_data(&kek, &header.dek_nonce, &header.encrypted_dek)
             .context("Invalid password or corrupted header.")?;
         let mut dek = [0u8; 32];
         dek.copy_from_slice(&dek_vec);
@@ -46,14 +53,23 @@ impl CipherFS {
         let mut encrypted_index = vec![0u8; header.index_size as usize];
         file.read_exact_at(&mut encrypted_index, header_size).context("Failed to read index")?;
 
-        let serialized_index = decrypt_data(&dek, &[0u8; 12], &encrypted_index)
+        let serialized_index = decrypt_data(&dek, &header.index_nonce, &encrypted_index)
             .context("Failed to decrypt index.")?;
         let index: Inode = rmp_serde::from_slice(&serialized_index)?;
 
         let data_offset = header_size + header.index_size;
 
         let mut inode_map = HashMap::new();
-        populate_inode_map(&mut inode_map, &index);
+        // Iterative population of inode map to prevent Stack Overflow
+        let mut stack = vec![&index];
+        while let Some(node) = stack.pop() {
+            inode_map.insert(node.ino(), node.clone());
+            if let Inode::Directory { entries, .. } = node {
+                for child in entries.values() {
+                    stack.push(child);
+                }
+            }
+        }
 
         Ok(Self {
             file,
@@ -66,15 +82,6 @@ impl CipherFS {
 
     fn get_inode(&self, ino: u64) -> Option<&Inode> {
         self.inode_map.get(&ino)
-    }
-}
-
-fn populate_inode_map(map: &mut HashMap<u64, Inode>, inode: &Inode) {
-    map.insert(inode.ino(), inode.clone());
-    if let Inode::Directory { entries, .. } = inode {
-        for child in entries.values() {
-            populate_inode_map(map, child);
-        }
     }
 }
 

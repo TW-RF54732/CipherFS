@@ -8,6 +8,11 @@ use blake3;
 use crate::layout::Argon2Params;
 
 pub fn derive_kek(password: &str, salt: &[u8], params: &Argon2Params) -> Result<[u8; 32]> {
+    // Security: Validate parameters to prevent DoS via excessive memory/CPU consumption
+    if params.m_cost > 1024 * 1024 || params.t_cost > 100 || params.p_cost > 64 {
+        anyhow::bail!("Argon2 parameters are too expensive (m: {}, t: {}, p: {}).", params.m_cost, params.t_cost, params.p_cost);
+    }
+
     let argon2 = Argon2::new(
         argon2::Algorithm::Argon2id,
         argon2::Version::V0x13,

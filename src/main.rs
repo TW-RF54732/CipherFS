@@ -138,8 +138,8 @@ fn main() -> Result<()> {
             println!("[Info] Press Ctrl+C to unmount and exit.");
 
             unsafe {
-                libc::signal(libc::SIGINT, handle_signal as libc::sighandler_t);
-                libc::signal(libc::SIGTERM, handle_signal as libc::sighandler_t);
+                libc::signal(libc::SIGINT, handle_signal as *const () as libc::sighandler_t);
+                libc::signal(libc::SIGTERM, handle_signal as *const () as libc::sighandler_t);
             }
 
             while RUNNING.load(Ordering::SeqCst) {
@@ -161,7 +161,7 @@ fn main() -> Result<()> {
             let mut header: crate::layout::Header = rmp_serde::from_read(&mut cursor)?;
 
             let old_kek = crate::crypto::derive_kek(&old_password, &header.salt, &header.argon2_params)?;
-            let dek = crate::crypto::decrypt_data(&old_kek, &[0u8; 12], &header.encrypted_dek)
+            let dek = crate::crypto::decrypt_data(&old_kek, &header.dek_nonce, &header.encrypted_dek)
                 .context("Invalid current password.")?;
 
             let new_password = rpassword::prompt_password("Set New Master Password: ")?;
@@ -175,8 +175,13 @@ fn main() -> Result<()> {
             rand::rng().fill_bytes(&mut new_salt);
             header.salt = new_salt;
             
+            // New random dek_nonce for security
+            let mut new_dek_nonce = [0u8; 12];
+            rand::rng().fill_bytes(&mut new_dek_nonce);
+            header.dek_nonce = new_dek_nonce;
+
             let new_kek = crate::crypto::derive_kek(&new_password, &header.salt, &header.argon2_params)?;
-            let encrypted_dek_vec = crate::crypto::encrypt_data(&new_kek, &[0u8; 12], &dek)?;
+            let encrypted_dek_vec = crate::crypto::encrypt_data(&new_kek, &header.dek_nonce, &dek)?;
             header.encrypted_dek.copy_from_slice(&encrypted_dek_vec);
 
             let header_bytes = rmp_serde::to_vec(&header)?;
