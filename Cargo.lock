@@ -3,6 +3,29 @@
 version = 4
 
 [[package]]
+name = "CipherFS"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "argon2",
+ "blake3",
+ "chacha20poly1305",
+ "clap",
+ "fuser",
+ "hex",
+ "indicatif",
+ "libc",
+ "parking_lot",
+ "rand",
+ "rayon",
+ "rmp-serde",
+ "rpassword",
+ "serde",
+ "serde-big-array",
+ "walkdir",
+]
+
+[[package]]
 name = "aead"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -571,29 +594,6 @@ name = "log"
 version = "0.4.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
-
-[[package]]
-name = "lolVoult"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "argon2",
- "blake3",
- "chacha20poly1305",
- "clap",
- "fuser",
- "hex",
- "indicatif",
- "libc",
- "parking_lot",
- "rand",
- "rayon",
- "rmp-serde",
- "rpassword",
- "serde",
- "serde-big-array",
- "walkdir",
-]
 
 [[package]]
 name = "memchr"
