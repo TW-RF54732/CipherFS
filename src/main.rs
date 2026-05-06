@@ -78,6 +78,7 @@ fn main() -> Result<()> {
                 .repo_owner("TW-RF54732")
                 .repo_name("cipherfs")
                 .bin_name("cipherfs")
+                .target("cipherfs")
                 .show_download_progress(true)
                 .current_version(env!("CARGO_PKG_VERSION"))
                 .build()
