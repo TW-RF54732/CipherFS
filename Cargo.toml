@@ -1,6 +1,6 @@
 [package]
 name = "cipherfs"
-version = "1.4.0"
+version = "1.5.0"
 edition = "2024"
 
 [dependencies]
@@ -9,7 +9,7 @@ argon2 = "0.5.3"
 blake3 = "1.8.5"
 chacha20poly1305 = "0.10.1"
 clap = { version = "4.6.1", features = ["derive"] }
-fuser = "0.17.0"
+fuser = { version = "0.17.0", default-features = false }
 hex = "0.4.3"
 indicatif = "0.18.4"
 libc = "0.2.186"
@@ -21,4 +21,4 @@ rpassword = "7.5.2"
 serde = { version = "1.0.228", features = ["derive"] }
 serde-big-array = "0.5.1"
 walkdir = "2.5.0"
-self_update = { version = "0.41", features = ["archive-tar"] }
+self_update = { version = "0.41", default-features = false, features = ["rustls", "archive-tar", "compression-flate2"] }
