@@ -27,11 +27,4 @@ impl Inode {
             Inode::Directory { ino, .. } => *ino,
         }
     }
-
-    pub fn parent_ino(&self) -> u64 {
-        match self {
-            Inode::File { parent_ino, .. } => *parent_ino,
-            Inode::Directory { parent_ino, .. } => *parent_ino,
-        }
-    }
 }
