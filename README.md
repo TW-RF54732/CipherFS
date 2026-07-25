@@ -2,7 +2,63 @@
 
 CipherFS is an experimental side project that explores a read-only encrypted
 virtual filesystem for Linux. It is a hobby project and a playground for trying
-out filesystem and encryption-related ideas—not a production security product.
+out filesystem and encryption-related ideas - not a production security product.
+
+**Rust 2024** · **Linux / FUSE 3** · **Argon2id** · **ChaCha20-Poly1305** ·
+**HKDF** · **Authenticated Random Access** · **Versioned Binary Format** ·
+**Safe File I/O** · **GitHub Actions**
+
+## Architecture at a Glance
+
+```mermaid
+flowchart LR
+    SOURCE["Source directory"]
+    PASSWORD["Master password"]
+
+    subgraph PACK["Pack pipeline"]
+        SCAN["Safe scan<br/>metadata validation"]
+        INDEX["Encrypted index<br/>MessagePack"]
+        CHUNKS["Per-file encryption<br/>4 MiB AEAD chunks"]
+    end
+
+    subgraph KEYS["Key hierarchy"]
+        KDF["Argon2id"]
+        KEK["KEK"]
+        DEK["Random DEK"]
+        DERIVE["HKDF<br/>index key + per-file keys"]
+    end
+
+    CONTAINER[("CipherFS v2 container<br/>authenticated header + index + chunks")]
+
+    subgraph ACCESS["Verified access paths"]
+        OPEN["Format and bounds validation<br/>AEAD authentication"]
+        FUSE["Read-only FUSE mount<br/>random access + LRU cache"]
+        EXTRACT["Safe extraction<br/>openat + no symlink traversal"]
+        VERIFY["Full-container verification"]
+    end
+
+    SOURCE --> SCAN
+    SCAN --> INDEX
+    SCAN --> CHUNKS
+    PASSWORD --> KDF --> KEK --> DEK
+    DEK --> DERIVE
+    DERIVE --> INDEX
+    DERIVE --> CHUNKS
+    INDEX --> CONTAINER
+    CHUNKS --> CONTAINER
+    CONTAINER --> OPEN
+    OPEN --> FUSE
+    OPEN --> EXTRACT
+    OPEN --> VERIFY
+```
+
+| Engineering area | What this project demonstrates |
+| --- | --- |
+| Systems programming | Linux FUSE callbacks, inode-based traversal, range reads, bounded chunk cache |
+| Applied cryptography | Password KDF, key hierarchy, domain-separated keys, AEAD-bound metadata and chunks |
+| Storage design | Versioned container format, encrypted index, random-access chunk layout, v1 compatibility |
+| Defensive I/O | Overflow and resource limits, atomic pack/replace, source-change detection, safe extraction |
+| Verification and delivery | Tamper/replay/truncation tests, Linux E2E workflow, signed self-update releases |
 
 > [!WARNING]
 > CipherFS has not received a professional security audit or extensive
@@ -151,7 +207,7 @@ See [SECURITY.md](SECURITY.md) for the threat model and reporting guidance, and
 ## License and Disclaimer
 
 CipherFS is made available under the MIT License. As stated by that license, the
-software is provided **“as is”**, without warranty of any kind. You are
+software is provided **"as is"**, without warranty of any kind. You are
 responsible for deciding whether it is appropriate for your use and for any
 consequences of using it.
 
