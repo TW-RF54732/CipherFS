@@ -12,6 +12,8 @@ to change before a stable release.
   within a comparison series.
 - Use a new empty extraction directory for every run.
 - Record every sample, including slow results and outliers.
+- Record progress-bar ETA separately from actual wall-clock elapsed time; ETA is
+  an observed-throughput estimate, not a completed benchmark.
 - Verify extracted content after timing.
 - Keep the existing corruption requirement: authentication failure must not
   commit output files under their final names.
@@ -102,6 +104,7 @@ Operation:
 --threads:
 Run number:
 Elapsed / user CPU / system CPU:
+Displayed ETA and when it was observed:
 Windows disk active time / response time / queue:
 MsMpEng.exe activity:
 Cache note:

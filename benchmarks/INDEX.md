@@ -16,8 +16,8 @@ profile, dataset, filesystem path, cache state, and thread count are controlled.
   user CPU, and system CPU samples from the parallel implementation work,
   including exploratory intermediate runs and the final 2 GiB comparison.
 - [`2026-08-01-real-images-observation.md`](2026-08-01-real-images-observation.md):
-  field observation from a 26.7 GiB image container and why the initial 8-minute
-  versus 3-hour timings are not yet a controlled comparison.
+  corrected field note for displayed 3-minute, 8-minute, and 3-hour ETAs from a
+  26.7 GiB image container, including the estimator formula and limitations.
 - [`PARALLEL_BETA_TEST_PLAN.md`](PARALLEL_BETA_TEST_PLAN.md): test matrix and
   reporting template for the v2.1.0 beta series.
 - [`run_parallel_bench.sh`](run_parallel_bench.sh): reproducible synthetic
@@ -32,3 +32,4 @@ profile, dataset, filesystem path, cache state, and thread count are controlled.
 5. Preserve raw samples and label intermediate implementation revisions.
 6. Verify extracted bytes and corruption-failure behavior before considering a
    performance sample valid.
+7. Record displayed ETA separately from actual wall-clock elapsed time.
