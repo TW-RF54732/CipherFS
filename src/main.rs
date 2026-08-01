@@ -1,13 +1,14 @@
 mod crypto;
 mod extract;
 mod format;
+mod fuse_mount;
 mod index;
 mod layout;
 mod legacy_extract;
 mod legacy_mount;
-mod mount;
 mod pack;
 mod parallel;
+mod readonly_fs;
 mod safe_fs;
 mod updater;
 mod v2;
@@ -22,7 +23,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use zeroize::Zeroizing;
 
 use crate::format::{Format, detect as detect_format};
-use crate::mount::CipherFS;
+use crate::fuse_mount::CipherFS;
 
 static RUNNING: AtomicBool = AtomicBool::new(true);
 
