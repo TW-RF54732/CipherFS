@@ -199,6 +199,7 @@ fn pack_inner(
     drop(output);
     progress.finish_with_message("Encrypted");
 
+    println!("[Info] Verifying completed container...");
     let opened = v2::open(&temp_path, password)
         .context("Self-verification could not reopen v2 container")?;
     v2::verify_all(&opened).context("Self-verification of packed container failed")?;
@@ -206,7 +207,7 @@ fn pack_inner(
 
     std::fs::rename(&temp_path, output_file)
         .with_context(|| format!("Unable to install {}", output_file.display()))?;
-    File::open(output_file.parent().unwrap_or_else(|| Path::new(".")))?.sync_all()?;
+    File::open(output_parent(output_file))?.sync_all()?;
     temp_guard.keep = true;
     println!("[Success] {} created and verified.", output_file.display());
     Ok(())
@@ -412,11 +413,27 @@ fn temporary_path(output: &Path) -> Result<PathBuf> {
     anyhow::bail!("Unable to allocate a temporary output name")
 }
 
+fn output_parent(output: &Path) -> &Path {
+    output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::{Read, Seek, Write};
     use std::os::unix::fs::FileExt;
+
+    #[test]
+    fn relative_output_without_directory_syncs_current_directory() {
+        assert_eq!(output_parent(Path::new("vault.cfs")), Path::new("."));
+        assert_eq!(
+            output_parent(Path::new("containers/vault.cfs")),
+            Path::new("containers")
+        );
+    }
 
     #[test]
     fn v2_round_trip_and_tamper_detection() {

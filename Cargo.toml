@@ -1,6 +1,6 @@
 [package]
 name = "cipherfs"
-version = "2.1.0-beta.1"
+version = "2.1.0-beta.2"
 edition = "2024"
 
 [dependencies]
