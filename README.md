@@ -148,8 +148,12 @@ cargo build --release
 ### Pack a Directory
 
 ```bash
-./cipherfs pack <source_directory> [output_file]
+./cipherfs pack <source_directory> [output_file] [--threads 0]
 ```
+
+CipherFS encrypts independent 4 MiB chunks concurrently. `--threads 0` (the
+default) uses the available CPU parallelism; set a positive value to limit the
+worker count when sharing the machine with other workloads.
 
 ### Mount a Container
 
@@ -162,19 +166,43 @@ The filesystem is mounted read-only. Press **Ctrl+C** to unmount.
 ### Extract a Container
 
 ```bash
-./cipherfs extract <container.cfs> <output_dir>
+./cipherfs extract <container.cfs> <output_dir> [--threads 0]
 ```
 
 Extraction rejects unsafe paths and symbolic-link traversal. A file is installed
-under its final name only after every encrypted chunk has authenticated.
+under its final name only after every encrypted chunk has authenticated. Chunk
+decryption is concurrent, while a bounded ordered buffer preserves file order
+without retaining an entire large file in memory.
 
 ### Verify Without Extracting
 
 ```bash
-./cipherfs verify <container.cfs>
+./cipherfs verify <container.cfs> [--threads 0]
 ```
 
-This authenticates the v2 header, index, and every encrypted data chunk.
+This authenticates the v2 header, index, and every encrypted data chunk. Data
+chunks are verified concurrently.
+
+### Performance Notes
+
+- Pack, extract, and verify parallelize v2 chunk cryptography on the CPU.
+- Performance comparisons must use a release build (`cargo build --release` or
+  `cargo run --release`). The default `cargo run` development build is not a
+  meaningful encryption-throughput benchmark.
+- Pack writes encrypted chunks directly to their authenticated index offsets;
+  the v2 on-disk format remains compatible with existing v2 containers.
+- Parallelism is bounded by the worker count, so processing a 100 GB file does
+  not require holding the whole file in memory.
+- More threads only help until storage bandwidth becomes the bottleneck. On a
+  slower disk, a lower `--threads` value may provide similar throughput with
+  less CPU and memory pressure.
+- WSL access to Windows-mounted paths such as `/mnt/c` crosses a filesystem
+  boundary and may behave very differently from native WSL ext4 storage. Test
+  `--threads 1`, `4`, and `0` on representative data before choosing a default
+  for large jobs.
+- GPU encryption is not currently used. ChaCha20-Poly1305 is CPU-friendly, and
+  transferring 4 MiB chunks through GPU memory adds portability, driver, and
+  plaintext-exposure costs that need measured benefits before adoption.
 
 ### Install a Signed Update
 

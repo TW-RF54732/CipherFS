@@ -6,6 +6,7 @@ use chacha20poly1305::{
 };
 use hkdf::Hkdf;
 use rand::Rng;
+use rayon::prelude::*;
 use serde::de::{SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use serde_big_array::BigArray;
@@ -823,13 +824,16 @@ pub fn verify_all(opened: &OpenedContainer) -> Result<()> {
         .filter(|entry| entry.kind == EntryKind::File)
         .collect();
     files.sort_by_key(|entry| entry.data_offset);
-    for entry in files {
-        for chunk_index in 0..entry.chunk_count {
-            let _plaintext = decrypt_chunk(opened, entry, chunk_index)
-                .with_context(|| format!("File entry {} chunk {} failed", entry.id, chunk_index))?;
-        }
-    }
-    Ok(())
+    files.par_iter().try_for_each(|entry| -> Result<()> {
+        (0..entry.chunk_count)
+            .into_par_iter()
+            .try_for_each(|chunk_index| -> Result<()> {
+                let _plaintext = decrypt_chunk(opened, entry, chunk_index).with_context(|| {
+                    format!("File entry {} chunk {} failed", entry.id, chunk_index)
+                })?;
+                Ok(())
+            })
+    })
 }
 
 #[cfg(test)]

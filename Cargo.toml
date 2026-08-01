@@ -1,6 +1,6 @@
 [package]
 name = "cipherfs"
-version = "2.0.0"
+version = "2.1.0-beta.1"
 edition = "2024"
 
 [dependencies]
@@ -17,6 +17,7 @@ libc = "0.2.186"
 minisign-verify = "0.2.5"
 parking_lot = "0.12.5"
 rand = "0.10.1"
+rayon = "1.11.0"
 reqwest = { version = "0.12.28", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 rmp-serde = "1.3.1"
 rpassword = "7.5.2"

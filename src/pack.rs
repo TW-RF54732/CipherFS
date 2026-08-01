@@ -1,9 +1,10 @@
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
 use rand::Rng;
+use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions};
-use std::io::{BufReader, BufWriter, Read, Write};
+use std::os::unix::fs::FileExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
@@ -40,6 +41,32 @@ impl Drop for TempOutput {
 
 #[allow(clippy::too_many_arguments)]
 pub fn pack(
+    source_dir: &Path,
+    output_file: &Path,
+    password: &str,
+    duress_password: Option<&str>,
+    argon2_m_cost: u32,
+    argon2_t_cost: u32,
+    argon2_p_cost: u32,
+    max_index_size: u64,
+    threads: usize,
+) -> Result<()> {
+    crate::parallel::install(threads, || {
+        pack_inner(
+            source_dir,
+            output_file,
+            password,
+            duress_password,
+            argon2_m_cost,
+            argon2_t_cost,
+            argon2_p_cost,
+            max_index_size,
+        )
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn pack_inner(
     source_dir: &Path,
     output_file: &Path,
     password: &str,
@@ -127,13 +154,20 @@ pub fn pack(
         keep: false,
     };
     let output = OpenOptions::new()
+        .read(true)
         .write(true)
         .create_new(true)
         .open(&temp_path)
         .context("Unable to create temporary container")?;
-    let mut writer = BufWriter::new(output);
-    writer.write_all(&v2::serialize_header(&header)?)?;
-    writer.write_all(&encrypted_index)?;
+    let data_start = (HEADER_SIZE as u64)
+        .checked_add(header.index_size)
+        .context("Container data offset overflow")?;
+    let container_size = data_start
+        .checked_add(header.data_size)
+        .context("Container size overflow")?;
+    output.set_len(container_size)?;
+    output.write_all_at(&v2::serialize_header(&header)?, 0)?;
+    output.write_all_at(&encrypted_index, HEADER_SIZE as u64)?;
     encrypted_index.zeroize();
 
     let progress = ProgressBar::new(total_plaintext);
@@ -150,25 +184,19 @@ pub fn pack(
         .iter()
         .map(|entry| (entry.id, entry))
         .collect();
-    let mut processed = 0u64;
-    for (entry_id, snapshot) in &sources {
-        let entry = entry_by_id
-            .get(entry_id)
-            .context("Internal source entry mismatch")?;
-        encrypt_source_file(
-            &mut writer,
-            snapshot,
-            entry,
-            &header,
-            &dek,
-            &progress,
-            &mut processed,
-        )?;
-    }
+    sources
+        .par_iter()
+        .try_for_each(|(entry_id, snapshot)| -> Result<()> {
+            let entry = entry_by_id
+                .get(entry_id)
+                .context("Internal source entry mismatch")?;
+            encrypt_source_file(
+                &output, data_start, snapshot, entry, &header, &dek, &progress,
+            )
+        })?;
 
-    writer.flush()?;
-    writer.get_ref().sync_all()?;
-    drop(writer);
+    output.sync_all()?;
+    drop(output);
     progress.finish_with_message("Encrypted");
 
     let opened = v2::open(&temp_path, password)
@@ -299,13 +327,13 @@ fn scan_source(source_dir: &Path) -> Result<ScanResult> {
 }
 
 fn encrypt_source_file(
-    writer: &mut BufWriter<File>,
+    output: &File,
+    data_start: u64,
     snapshot: &SourceSnapshot,
     entry: &Entry,
     header: &Header,
     dek: &[u8; 32],
     progress: &ProgressBar,
-    processed: &mut u64,
 ) -> Result<()> {
     let file = File::open(&snapshot.path)
         .with_context(|| format!("Unable to open {}", snapshot.path.display()))?;
@@ -315,34 +343,41 @@ fn encrypt_source_file(
         &header.container_id,
         &entry.file_id,
     )?);
-    let mut reader = BufReader::new(file);
-    let mut buffer = Zeroizing::new(vec![0u8; CHUNK_SIZE]);
-    let mut total_read = 0u64;
-    for chunk_index in 0..entry.chunk_count {
-        let remaining = entry.size - total_read;
-        let expected = std::cmp::min(CHUNK_SIZE as u64, remaining) as usize;
-        reader.read_exact(&mut buffer[..expected])?;
-        let mut encrypted = v2::encrypt_aead(
-            &key,
-            &v2::chunk_nonce(chunk_index),
-            &v2::chunk_aad(header, entry, chunk_index, expected as u64),
-            &buffer[..expected],
-        )?;
-        writer.write_all(&encrypted)?;
-        encrypted.zeroize();
-        buffer[..expected].zeroize();
-        total_read += expected as u64;
-        *processed += expected as u64;
-        progress.set_position(*processed);
-    }
-    let mut extra = [0u8; 1];
-    if reader.read(&mut extra)? != 0 || total_read != entry.size {
-        anyhow::bail!(
-            "Source file changed while packing: {}",
-            snapshot.path.display()
-        );
-    }
-    ensure_unchanged(snapshot, &reader.get_ref().metadata()?)?;
+    (0..entry.chunk_count)
+        .into_par_iter()
+        .try_for_each(|chunk_index| -> Result<()> {
+            let plain_offset = chunk_index
+                .checked_mul(CHUNK_SIZE as u64)
+                .context("Source chunk offset overflow")?;
+            let expected = std::cmp::min(CHUNK_SIZE as u64, entry.size - plain_offset) as usize;
+            let mut buffer = Zeroizing::new(vec![0u8; expected]);
+            file.read_exact_at(&mut buffer, plain_offset)
+                .with_context(|| {
+                    format!(
+                        "Unable to read {} chunk {}",
+                        snapshot.path.display(),
+                        chunk_index
+                    )
+                })?;
+            let mut encrypted = v2::encrypt_aead(
+                &key,
+                &v2::chunk_nonce(chunk_index),
+                &v2::chunk_aad(header, entry, chunk_index, expected as u64),
+                &buffer,
+            )?;
+            let relative = chunk_index
+                .checked_mul(CHUNK_SIZE as u64 + v2::TAG_SIZE)
+                .context("Encrypted chunk offset overflow")?;
+            let destination = data_start
+                .checked_add(entry.data_offset)
+                .and_then(|value| value.checked_add(relative))
+                .context("Encrypted chunk position overflow")?;
+            output.write_all_at(&encrypted, destination)?;
+            encrypted.zeroize();
+            progress.inc(expected as u64);
+            Ok(())
+        })?;
+    ensure_unchanged(snapshot, &file.metadata()?)?;
     Ok(())
 }
 
@@ -380,7 +415,7 @@ fn temporary_path(output: &Path) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{Read, Seek};
+    use std::io::{Read, Seek, Write};
     use std::os::unix::fs::FileExt;
 
     #[test]
@@ -393,7 +428,7 @@ mod tests {
         std::fs::write(source.join("small.txt"), b"private data").unwrap();
         std::fs::write(source.join("twin-a.txt"), b"identical secret").unwrap();
         std::fs::write(source.join("twin-b.txt"), b"identical secret").unwrap();
-        let mut boundary = vec![0x5au8; CHUNK_SIZE + 1];
+        let mut boundary = vec![0x5au8; CHUNK_SIZE * 4 + 1];
         std::fs::write(source.join("boundary.bin"), &boundary).unwrap();
         boundary.zeroize();
 
@@ -406,9 +441,10 @@ mod tests {
             1,
             1,
             MAX_INDEX_SIZE,
+            2,
         )
         .unwrap();
-        crate::extract::extract_v2(&container, &extracted, "master").unwrap();
+        crate::extract::extract_v2(&container, &extracted, "master", 2).unwrap();
         assert_eq!(
             std::fs::read(extracted.join("small.txt")).unwrap(),
             b"private data"
@@ -417,7 +453,7 @@ mod tests {
             std::fs::metadata(extracted.join("boundary.bin"))
                 .unwrap()
                 .len(),
-            (CHUNK_SIZE + 1) as u64
+            (CHUNK_SIZE * 4 + 1) as u64
         );
         assert!(extracted.join("empty").is_dir());
 
@@ -453,7 +489,7 @@ mod tests {
         assert!(v2::verify_all(&opened).is_err());
         drop(opened);
         let failed_extract = temp.path().join("failed-extract");
-        assert!(crate::extract::extract_v2(&replay_copy, &failed_extract, "master").is_err());
+        assert!(crate::extract::extract_v2(&replay_copy, &failed_extract, "master", 2).is_err());
         assert!(
             std::fs::read_dir(&failed_extract)
                 .unwrap()

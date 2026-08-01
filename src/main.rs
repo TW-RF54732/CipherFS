@@ -7,6 +7,7 @@ mod legacy_extract;
 mod legacy_mount;
 mod mount;
 mod pack;
+mod parallel;
 mod safe_fs;
 mod updater;
 mod v2;
@@ -51,9 +52,18 @@ enum Commands {
         /// Maximum index size accepted during this pack, in MiB (local hard cap: 512)
         #[arg(long, default_value_t = 512)]
         max_index: u64,
+        /// Worker threads for chunk encryption (0 uses the available CPU parallelism)
+        #[arg(long, default_value_t = 0, value_parser = parse_threads)]
+        threads: usize,
     },
     /// Extract a v1 or v2 container
-    Extract { container: PathBuf, output: PathBuf },
+    Extract {
+        container: PathBuf,
+        output: PathBuf,
+        /// Worker threads for v2 chunk decryption (0 uses the available CPU parallelism)
+        #[arg(long, default_value_t = 0, value_parser = parse_threads)]
+        threads: usize,
+    },
     /// Mount a v1 or v2 container read-only
     Mount {
         container: PathBuf,
@@ -65,9 +75,24 @@ enum Commands {
     /// Change the master password of a v2 container
     Passwd { container: PathBuf },
     /// Authenticate the complete header, index, and data without extracting
-    Verify { container: PathBuf },
+    Verify {
+        container: PathBuf,
+        /// Worker threads for v2 chunk verification (0 uses the available CPU parallelism)
+        #[arg(long, default_value_t = 0, value_parser = parse_threads)]
+        threads: usize,
+    },
     /// Install the latest release only after Minisign verification
     Update,
+}
+
+fn parse_threads(value: &str) -> std::result::Result<usize, String> {
+    let threads = value
+        .parse::<usize>()
+        .map_err(|_| "threads must be an integer from 0 through 256".to_string())?;
+    if threads > 256 {
+        return Err("threads must be an integer from 0 through 256".to_string());
+    }
+    Ok(threads)
 }
 
 fn main() -> Result<()> {
@@ -81,6 +106,7 @@ fn main() -> Result<()> {
             t_cost,
             p_cost,
             max_index,
+            threads,
         } => {
             let output = output.unwrap_or_else(|| {
                 source
@@ -114,12 +140,17 @@ fn main() -> Result<()> {
                 t_cost,
                 p_cost,
                 max_index_bytes,
+                threads,
             )
         }
-        Commands::Extract { container, output } => {
+        Commands::Extract {
+            container,
+            output,
+            threads,
+        } => {
             let password = Zeroizing::new(rpassword::prompt_password("Enter Password: ")?);
             match detect_format(&container)? {
-                Format::V2 => extract::extract_v2(&container, &output, &password),
+                Format::V2 => extract::extract_v2(&container, &output, &password, threads),
                 Format::V1 => {
                     eprintln!(
                         "[Warning] Legacy v1 has known design limitations; only open trusted containers."
@@ -181,12 +212,12 @@ fn main() -> Result<()> {
             println!("[Success] Password keyslot updated.");
             Ok(())
         }
-        Commands::Verify { container } => {
+        Commands::Verify { container, threads } => {
             let password = Zeroizing::new(rpassword::prompt_password("Enter Password: ")?);
             match detect_format(&container)? {
                 Format::V2 => {
                     let opened = v2::open(&container, &password)?;
-                    v2::verify_all(&opened)?;
+                    parallel::install(threads, || v2::verify_all(&opened))?;
                     println!("[Success] Header, index, and all encrypted chunks are valid.");
                     Ok(())
                 }
