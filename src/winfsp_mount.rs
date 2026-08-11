@@ -428,8 +428,15 @@ fn map_error(error: FsError) -> winfsp::FspError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::Rng;
 
     const CRASH_TEST_NAME: &str = "winfsp_mount::tests::hard_termination_folder_mount_recovers";
+
+    fn random_test_password() -> String {
+        let mut value = [0u8; 32];
+        rand::rng().fill_bytes(&mut value);
+        hex::encode(value)
+    }
 
     #[test]
     fn directory_mount_rejects_reparse_ancestor() {
@@ -466,8 +473,9 @@ mod tests {
             );
             let ready =
                 std::path::PathBuf::from(std::env::var_os("CIPHERFS_WINFSP_CRASH_READY").unwrap());
+            let password = std::env::var("CIPHERFS_WINFSP_CRASH_PASSWORD").unwrap();
             let _init = initialize_winfsp().unwrap();
-            let filesystem = WinFspCipherFs::open(&container, "master", 0).unwrap();
+            let filesystem = WinFspCipherFs::open(&container, &password, 0).unwrap();
             let mut host: FileSystemHost<WinFspCipherFs> =
                 FileSystemHost::new(volume_params(), filesystem).unwrap();
             host.start().unwrap();
@@ -488,12 +496,13 @@ mod tests {
         let container = temp.path().join("vault.cfs");
         let mountpoint = temp.path().join("mount");
         let ready = temp.path().join("ready");
+        let password = random_test_password();
         std::fs::create_dir(&source).unwrap();
         std::fs::write(source.join("file.txt"), b"recovery").unwrap();
         crate::pack::pack(
             &source,
             &container,
-            "master",
+            &password,
             None,
             crate::v2::MIN_ARGON_MEMORY_KIB,
             1,
@@ -509,6 +518,7 @@ mod tests {
             .env("CIPHERFS_WINFSP_CRASH_CONTAINER", &container)
             .env("CIPHERFS_WINFSP_CRASH_MOUNTPOINT", &mountpoint)
             .env("CIPHERFS_WINFSP_CRASH_READY", &ready)
+            .env("CIPHERFS_WINFSP_CRASH_PASSWORD", &password)
             .status()
             .unwrap();
         assert!(!status.success());
@@ -526,7 +536,7 @@ mod tests {
         }
 
         let _init = initialize_winfsp().unwrap();
-        let filesystem = WinFspCipherFs::open(&container, "master", 0).unwrap();
+        let filesystem = WinFspCipherFs::open(&container, &password, 0).unwrap();
         let mut host: FileSystemHost<WinFspCipherFs> =
             FileSystemHost::new(volume_params(), filesystem).unwrap();
         host.start().unwrap();
@@ -554,6 +564,7 @@ mod tests {
         let source = temp.path().join("source");
         let container = temp.path().join("vault.cfs");
         let mountpoint = temp.path().join("mount");
+        let password = random_test_password();
         std::fs::create_dir_all(source.join("empty")).unwrap();
         std::fs::create_dir(&mountpoint).unwrap();
         std::fs::write(source.join("small.txt"), b"private data").unwrap();
@@ -562,7 +573,7 @@ mod tests {
         crate::pack::pack(
             &source,
             &container,
-            "master",
+            &password,
             None,
             crate::v2::MIN_ARGON_MEMORY_KIB,
             1,
@@ -573,7 +584,7 @@ mod tests {
         .unwrap();
 
         if std::env::var_os("CIPHERFS_WINFSP_FOLDER_E2E").is_some() {
-            let filesystem = WinFspCipherFs::open(&container, "master", 8).unwrap();
+            let filesystem = WinFspCipherFs::open(&container, &password, 8).unwrap();
             let mut host: FileSystemHost<WinFspCipherFs> =
                 FileSystemHost::new(volume_params(), filesystem).unwrap();
             host.start().unwrap();
@@ -600,7 +611,7 @@ mod tests {
             .map(|index| (b'A' + index) as char)
             .expect("a free drive letter is required for WinFsp E2E");
         let drive_mount = format!("{drive_letter}:");
-        let drive_filesystem = WinFspCipherFs::open(&container, "master", 8).unwrap();
+        let drive_filesystem = WinFspCipherFs::open(&container, &password, 8).unwrap();
         let mut drive_host: FileSystemHost<WinFspCipherFs> =
             FileSystemHost::new(volume_params(), drive_filesystem).unwrap();
         drive_host.start().unwrap();
@@ -642,7 +653,7 @@ mod tests {
         drive_host.stop();
 
         let before_auto = unsafe { windows::Win32::Storage::FileSystem::GetLogicalDrives() };
-        let auto_filesystem = WinFspCipherFs::open(&container, "master", 8).unwrap();
+        let auto_filesystem = WinFspCipherFs::open(&container, &password, 8).unwrap();
         let mut auto_host: FileSystemHost<WinFspCipherFs> =
             FileSystemHost::new(volume_params(), auto_filesystem).unwrap();
         auto_host.start().unwrap();
@@ -678,7 +689,7 @@ mod tests {
             .map(|index| (b'A' + index) as char)
             .expect("a free drive letter is required for corruption E2E");
         let corrupt_mount = format!("{corrupt_letter}:");
-        let corrupt_filesystem = WinFspCipherFs::open(&container, "master", 0).unwrap();
+        let corrupt_filesystem = WinFspCipherFs::open(&container, &password, 0).unwrap();
         let mut corrupt_host: FileSystemHost<WinFspCipherFs> =
             FileSystemHost::new(volume_params(), corrupt_filesystem).unwrap();
         corrupt_host.start().unwrap();

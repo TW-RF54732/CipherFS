@@ -278,15 +278,20 @@ impl ReadOnlyV2Fs {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::Rng;
     use std::io::{Seek, SeekFrom, Write};
 
-    const PASSWORD: &str = "test-password";
+    fn random_test_password() -> String {
+        let mut value = [0u8; 32];
+        rand::rng().fill_bytes(&mut value);
+        hex::encode(value)
+    }
 
-    fn pack_test_container(source: &Path, container: &Path) {
+    fn pack_test_container(source: &Path, container: &Path, password: &str) {
         crate::pack::pack(
             source,
             container,
-            PASSWORD,
+            password,
             None,
             8192,
             1,
@@ -302,15 +307,16 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let source = temp.path().join("source");
         let container = temp.path().join("test.cfs");
+        let password = random_test_password();
         std::fs::create_dir(&source).unwrap();
         std::fs::create_dir(source.join("empty")).unwrap();
         std::fs::write(source.join("empty.bin"), []).unwrap();
         let mut contents = vec![0x41; CHUNK_SIZE];
         contents.extend_from_slice(b"cross-chunk-tail");
         std::fs::write(source.join("boundary.bin"), &contents).unwrap();
-        pack_test_container(&source, &container);
+        pack_test_container(&source, &container, &password);
 
-        let filesystem = ReadOnlyV2Fs::new(&container, PASSWORD, 8).unwrap();
+        let filesystem = ReadOnlyV2Fs::new(&container, &password, 8).unwrap();
         let root = filesystem.metadata(1).unwrap();
         assert_eq!(root.kind, EntryKind::Directory);
         let children = filesystem.read_dir(root.id).unwrap();
@@ -331,7 +337,7 @@ mod tests {
             FsErrorKind::IsDirectory
         );
 
-        let shared = Arc::new(ReadOnlyFs::open(&container, PASSWORD, 8).unwrap());
+        let shared = Arc::new(ReadOnlyFs::open(&container, &password, 8).unwrap());
         let names: Vec<_> = shared
             .read_dir(1)
             .unwrap()
@@ -385,11 +391,12 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let source = temp.path().join("source");
         let container = temp.path().join("corrupt.cfs");
+        let password = random_test_password();
         std::fs::create_dir(&source).unwrap();
         std::fs::write(source.join("secret.txt"), b"secret data").unwrap();
-        pack_test_container(&source, &container);
+        pack_test_container(&source, &container, &password);
 
-        let filesystem = ReadOnlyV2Fs::new(&container, PASSWORD, 0).unwrap();
+        let filesystem = ReadOnlyV2Fs::new(&container, &password, 0).unwrap();
         let file = filesystem.lookup(1, "secret.txt").unwrap();
         let mut handle = std::fs::OpenOptions::new()
             .read(true)

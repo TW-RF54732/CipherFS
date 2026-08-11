@@ -123,6 +123,13 @@ fn extract_v2_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::Rng;
+
+    fn random_test_password() -> String {
+        let mut value = [0u8; 32];
+        rand::rng().fill_bytes(&mut value);
+        hex::encode(value)
+    }
 
     #[test]
     fn injected_write_failure_removes_staging_and_destination() {
@@ -130,12 +137,13 @@ mod tests {
         let source = temp.path().join("source");
         let container = temp.path().join("vault.cfs");
         let output = temp.path().join("output");
+        let password = random_test_password();
         std::fs::create_dir(&source).unwrap();
         std::fs::write(source.join("file.bin"), vec![0x5a; 8192]).unwrap();
         crate::pack::pack(
             &source,
             &container,
-            "password",
+            &password,
             None,
             crate::v2::MIN_ARGON_MEMORY_KIB,
             1,
@@ -145,7 +153,7 @@ mod tests {
         )
         .unwrap();
 
-        let error = extract_v2_inner(&container, &output, "password", Some(1)).unwrap_err();
+        let error = extract_v2_inner(&container, &output, &password, Some(1)).unwrap_err();
         assert!(format!("{error:#}").contains("Injected extraction write failure"));
         assert!(!output.exists());
         assert!(std::fs::read_dir(temp.path()).unwrap().all(|entry| {

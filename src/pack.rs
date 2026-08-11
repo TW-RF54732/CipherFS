@@ -495,6 +495,12 @@ fn output_parent(output: &Path) -> &Path {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn random_test_password() -> String {
+        let mut value = [0u8; 32];
+        rand::rng().fill_bytes(&mut value);
+        hex::encode(value)
+    }
     use crate::platform_io::PlatformFileExt;
     use std::io::{Read, Seek, Write};
 
@@ -514,11 +520,12 @@ mod tests {
         let output = temp.path().join("vault.cfs");
         std::fs::create_dir(&source).unwrap();
         std::fs::write(source.join("file.bin"), b"private").unwrap();
+        let password = random_test_password();
 
         let error = pack_inner(
             &source,
             &output,
-            "password",
+            &password,
             None,
             crate::v2::MIN_ARGON_MEMORY_KIB,
             1,
@@ -545,11 +552,12 @@ mod tests {
         let output = temp.path().join("vault.cfs");
         std::fs::create_dir(&source).unwrap();
         std::fs::write(source.join("file.bin"), b"private").unwrap();
+        let password = random_test_password();
 
         let error = pack_inner(
             &source,
             &output,
-            "password",
+            &password,
             None,
             crate::v2::MIN_ARGON_MEMORY_KIB,
             1,
