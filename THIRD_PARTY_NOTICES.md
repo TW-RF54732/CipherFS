@@ -5,14 +5,16 @@ MIT License in `LICENSE`.
 
 The Windows build uses `winfsp-rs`, which is licensed under GNU GPL version 3.
 A distributed Windows executable containing that dependency is conveyed under
-the GPLv3 requirements for the combined work. The corresponding source is this
-repository and its locked Cargo dependencies. A copy of GPLv3 is available at
+the GPLv3 requirements for the combined work. The corresponding source is the
+exact tagged repository source archive, its `Cargo.lock`, the vendored binding
+source, and the exact-version source URLs in `THIRD_PARTY_DEPENDENCIES.md`.
+The full license is included in `LICENSE-GPL-3.0` and is available from
 <https://www.gnu.org/licenses/gpl-3.0.html>.
 
-The vendored `winfsp-sys` 0.12.1 build script was modified by CipherFS
-contributors on 2026-08-11 to copy the crate's pregenerated WinFsp 2.1 bindings
-instead of regenerating them with libclang. The bindings and import libraries
-remain from the upstream crate.
+The vendored `winfsp-sys` 0.12.1+winfsp-2.1 build script is modified to reuse
+the crate's pregenerated bindings instead of requiring libclang. CipherFS's
+root build script separately enables delay-load linking of `winfsp-x64.dll`.
+See `VENDORED_WINFSP.md` for provenance, hashes and review rules.
 
 WinFsp - Windows File System Proxy, Copyright (C) Bill Zissimopoulos.
 <https://github.com/winfsp/winfsp>

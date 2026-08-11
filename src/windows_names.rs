@@ -1,10 +1,47 @@
-use std::collections::{HashMap, HashSet};
+use std::cmp::Ordering;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+
+use windows::Win32::Globalization::{
+    CSTR_EQUAL, CSTR_GREATER_THAN, CSTR_LESS_THAN, CompareStringOrdinal,
+};
 
 use crate::readonly_fs::Node;
 
+#[derive(Clone, Debug)]
+struct OrdinalName {
+    uppercase: Vec<u16>,
+}
+
+impl OrdinalName {
+    fn new(value: String) -> Self {
+        let uppercase = windows_uppercase(&value);
+        Self { uppercase }
+    }
+}
+
+impl PartialEq for OrdinalName {
+    fn eq(&self, other: &Self) -> bool {
+        compare_wide(&self.uppercase, &other.uppercase) == Ordering::Equal
+    }
+}
+
+impl Eq for OrdinalName {}
+
+impl PartialOrd for OrdinalName {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for OrdinalName {
+    fn cmp(&self, other: &Self) -> Ordering {
+        compare_wide(&self.uppercase, &other.uppercase)
+    }
+}
+
 pub struct WindowsNameMap {
     names: HashMap<u64, String>,
-    lookup: HashMap<(u64, String), u64>,
+    lookup: BTreeMap<(u64, OrdinalName), u64>,
     changes: Vec<(String, String)>,
 }
 
@@ -14,34 +51,54 @@ impl WindowsNameMap {
         for node in nodes.iter().filter(|node| node.id != node.parent_id) {
             by_parent.entry(node.parent_id).or_default().push(node);
         }
+
         let mut names = HashMap::new();
-        let mut lookup = HashMap::new();
+        let mut lookup = BTreeMap::new();
         for (parent, mut children) in by_parent {
             children.sort_by_key(|node| node.id);
-            let mut base_counts: HashMap<String, usize> = HashMap::new();
+            let mut groups: BTreeMap<OrdinalName, Vec<&Node>> = BTreeMap::new();
             for child in &children {
-                *base_counts.entry(child.name.to_lowercase()).or_default() += 1;
+                groups
+                    .entry(OrdinalName::new(child.name.clone()))
+                    .or_default()
+                    .push(child);
             }
-            let mut used = HashSet::new();
-            for child in children {
-                let invalid = needs_mapping(&child.name);
-                let collision = base_counts
-                    .get(&child.name.to_lowercase())
-                    .copied()
-                    .unwrap_or(0)
-                    > 1;
-                let mut display = if invalid || collision {
-                    mapped_name(&child.name, child.id)
-                } else {
-                    child.name.clone()
-                };
-                while !used.insert(display.to_lowercase()) {
-                    display = mapped_name(&display, child.id);
+            let collisions: HashSet<u64> = groups
+                .values()
+                .filter(|group| group.len() > 1)
+                .flatten()
+                .map(|node| node.id)
+                .collect();
+
+            let mut used = BTreeSet::new();
+            for child in &children {
+                if !needs_mapping(&child.name) && !collisions.contains(&child.id) {
+                    used.insert(OrdinalName::new(child.name.clone()));
+                    names.insert(child.id, child.name.clone());
                 }
-                lookup.insert((parent, display.to_lowercase()), child.id);
+            }
+            for child in &children {
+                if names.contains_key(&child.id) {
+                    continue;
+                }
+                let mut attempt = 0u64;
+                let display = loop {
+                    let candidate = mapped_name(&child.name, child.id, attempt);
+                    if used.insert(OrdinalName::new(candidate.clone())) {
+                        break candidate;
+                    }
+                    attempt = attempt.saturating_add(1);
+                };
                 names.insert(child.id, display);
             }
+            for child in children {
+                let display = names
+                    .get(&child.id)
+                    .expect("every child has a display name");
+                lookup.insert((parent, OrdinalName::new(display.clone())), child.id);
+            }
         }
+
         let by_id: HashMap<u64, &Node> = nodes.iter().map(|node| (node.id, node)).collect();
         let mut changed_nodes: Vec<&Node> = nodes
             .iter()
@@ -74,7 +131,7 @@ impl WindowsNameMap {
 
     pub fn lookup(&self, parent: u64, display_name: &str) -> Option<u64> {
         self.lookup
-            .get(&(parent, display_name.to_lowercase()))
+            .get(&(parent, OrdinalName::new(display_name.to_string())))
             .copied()
     }
 
@@ -89,6 +146,39 @@ impl WindowsNameMap {
             );
         }
     }
+}
+
+pub fn compare_display_names(left: &str, right: &str) -> Ordering {
+    ordinal_compare(left, right)
+}
+
+pub fn equivalent(left: &str, right: &str) -> bool {
+    ordinal_compare(left, right) == Ordering::Equal
+}
+
+fn ordinal_compare(left: &str, right: &str) -> Ordering {
+    compare_wide(&windows_uppercase(left), &windows_uppercase(right))
+}
+
+fn compare_wide(left: &[u16], right: &[u16]) -> Ordering {
+    let result = unsafe { CompareStringOrdinal(left, right, true) };
+    if result == CSTR_LESS_THAN {
+        Ordering::Less
+    } else if result == CSTR_EQUAL {
+        Ordering::Equal
+    } else if result == CSTR_GREATER_THAN {
+        Ordering::Greater
+    } else {
+        left.cmp(right)
+    }
+}
+
+fn windows_uppercase(value: &str) -> Vec<u16> {
+    // CompareStringOrdinal(ignoreCase=true) does not collapse every pair in
+    // the NTFS upcase table (notably Greek sigma/final-sigma). Normalize to a
+    // conservative filesystem key first, then keep ordering and equality in
+    // the Windows ordinal API.
+    value.to_uppercase().encode_utf16().collect()
 }
 
 fn node_path(id: u64, nodes: &HashMap<u64, &Node>, names: &HashMap<u64, String>) -> String {
@@ -126,12 +216,19 @@ fn needs_mapping(name: &str) -> bool {
             .strip_prefix("COM")
             .or_else(|| upper.strip_prefix("LPT"))
             .is_some_and(|number| {
-                matches!(number, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9")
+                matches!(
+                    number,
+                    "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+                )
             })
 }
 
-fn mapped_name(name: &str, id: u64) -> String {
-    let suffix = format!("~cfs-{id:016x}");
+fn mapped_name(name: &str, id: u64, attempt: u64) -> String {
+    let suffix = if attempt == 0 {
+        format!("~cfs-{id:016x}")
+    } else {
+        format!("~cfs-{id:016x}-{attempt}")
+    };
     let mut cleaned: String = name
         .chars()
         .map(|ch| {
@@ -170,9 +267,9 @@ mod tests {
     }
 
     #[test]
-    fn maps_reserved_invalid_and_case_collisions_deterministically() {
-        let secondary = format!("bad_~cfs-{:016x}", 3);
-        let overlong = "😀".repeat(128);
+    fn maps_reserved_invalid_and_windows_ordinal_collisions() {
+        let generated_collision = format!("bad_.txt~cfs-{:016x}", 3);
+        let overlong = "??".repeat(128);
         let nodes = vec![
             node(2, "CON"),
             node(3, "bad?.txt"),
@@ -180,16 +277,29 @@ mod tests {
             node(5, "a.txt"),
             node(6, "trailing. "),
             node(7, &overlong),
-            node(8, &secondary),
+            node(8, &generated_collision),
+            node(9, "COM¹.txt"),
+            node(10, "LPT³"),
+            node(11, "σ.txt"),
+            node(12, "ς.txt"),
+            node(13, "µ.txt"),
+            node(14, "μ.txt"),
         ];
         let map = WindowsNameMap::new(&nodes);
-        for item in &nodes[..6] {
-            assert!(map.name(item).contains("~cfs-"));
+        for item in &nodes {
             assert_eq!(map.lookup(1, map.name(item)), Some(item.id));
             assert!(map.name(item).encode_utf16().count() <= 255);
         }
+        for id in [2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14] {
+            let item = nodes.iter().find(|node| node.id == id).unwrap();
+            assert!(
+                map.name(item).contains("~cfs-"),
+                "entry {id} was not mapped: {:?}",
+                map.name(item)
+            );
+        }
         assert_ne!(map.name(&nodes[1]), map.name(&nodes[6]));
-        assert_eq!(map.lookup(1, map.name(&nodes[5])), Some(7));
-        assert_eq!(map.lookup(1, map.name(&nodes[6])), Some(8));
+        assert!(equivalent("σ.txt", "ς.txt"));
+        assert!(equivalent("µ.txt", "μ.txt"));
     }
 }

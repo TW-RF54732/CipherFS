@@ -906,6 +906,53 @@ mod tests {
     }
 
     #[test]
+    fn malformed_index_graphs_are_rejected() {
+        let root = Entry {
+            id: 1,
+            parent_id: 1,
+            name: String::new(),
+            depth: 0,
+            kind: EntryKind::Directory,
+            file_id: [0; 16],
+            size: 0,
+            data_offset: 0,
+            encrypted_size: 0,
+            chunk_count: 0,
+        };
+        let directory = |id, parent_id, name: &str, depth| Entry {
+            id,
+            parent_id,
+            name: name.to_string(),
+            depth,
+            kind: EntryKind::Directory,
+            file_id: [0; 16],
+            size: 0,
+            data_offset: 0,
+            encrypted_size: 0,
+            chunk_count: 0,
+        };
+
+        for entries in [
+            vec![root.clone(), directory(2, 99, "missing", 1)],
+            vec![
+                root.clone(),
+                directory(2, 1, "same", 1),
+                directory(3, 1, "same", 1),
+            ],
+            vec![
+                root.clone(),
+                directory(2, 3, "a", 1),
+                directory(3, 2, "b", 2),
+            ],
+            vec![root.clone(), directory(1, 1, "duplicate", 0)],
+        ] {
+            let mut header = test_header();
+            header.entry_count = entries.len() as u64;
+            assert!(validate_index(&header, Index { entries }).is_err());
+        }
+    }
+
+    #[test]
     fn declared_index_array_above_limit_is_rejected_before_allocation() {
         let encoded = [0x91, 0xdd, 0xff, 0xff, 0xff, 0xff];
         assert!(rmp_serde::from_slice::<Index>(&encoded).is_err());

@@ -1,11 +1,11 @@
 [package]
 name = "cipherfs"
-version = "2.2.0-beta.1"
+version = "2.2.0"
 edition = "2024"
 license = "MIT"
 
 [dependencies]
-anyhow = "1.0.102"
+anyhow = "1.0.103"
 argon2 = "0.5.3"
 blake3 = "1.8.5"
 chacha20poly1305 = "0.10.1"
@@ -39,6 +39,7 @@ winfsp = "0.13.0"
 winfsp-sys = "0.12.1"
 windows = { version = "0.61.3", features = [
     "Win32_Foundation",
+    "Win32_Globalization",
     "Win32_Security",
     "Win32_Security_Authorization",
     "Win32_Storage_FileSystem",

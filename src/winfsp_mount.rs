@@ -14,20 +14,20 @@ use windows::Win32::Security::{
     TOKEN_USER, TokenUser,
 };
 use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_READONLY};
-use windows::Win32::System::LibraryLoader::LoadLibraryW;
-use windows::Win32::System::Registry::{HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ, RegGetValueW};
 use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
-use windows::core::{HSTRING, PCWSTR, PWSTR, w};
+use windows::core::{HSTRING, PCWSTR, PWSTR};
+use winfsp::U16CStr;
 use winfsp::filesystem::{
     DirInfo, DirMarker, FileInfo, FileSecurity, FileSystemContext, ModificationDescriptor,
     OpenFileInfo, VolumeInfo, WideNameInfo,
 };
 use winfsp::host::{FileSystemHost, MountPoint, VolumeParams};
-use winfsp::{U16CStr, winfsp_init};
 use winfsp_sys::{FILE_ACCESS_RIGHTS, FILE_FLAGS_AND_ATTRIBUTES};
 
 use crate::readonly_fs::{FsError, FsErrorKind, Node, NodeKind, ReadOnlyFs};
-use crate::windows_names::WindowsNameMap;
+use crate::windows_names::{WindowsNameMap, compare_display_names, equivalent};
+use crate::winfsp_mountpoint::prepare as prepare_directory_mountpoint;
+use crate::winfsp_runtime::initialize as initialize_winfsp;
 
 pub struct WinFspCipherFs {
     core: ReadOnlyFs,
@@ -47,7 +47,9 @@ impl WinFspCipherFs {
             if node.kind == NodeKind::Directory {
                 nodes.extend(core.read_dir(node.id)?);
             } else {
-                total_size = total_size.saturating_add(node.size);
+                total_size = total_size
+                    .checked_add(node.size)
+                    .context("Mounted plaintext size overflow")?;
             }
             cursor += 1;
         }
@@ -230,23 +232,19 @@ impl FileSystemContext for WinFspCipherFs {
         }
         let mut children = self.core.read_dir(context.id).map_err(map_error)?;
         children.sort_by(|left, right| {
-            self.names
-                .name(left)
-                .to_lowercase()
-                .cmp(&self.names.name(right).to_lowercase())
+            compare_display_names(self.names.name(left), self.names.name(right))
                 .then(left.id.cmp(&right.id))
         });
         let marker = marker
             .inner_as_cstr()
             .map(U16CStr::to_string_lossy)
             .unwrap_or_default();
-        let marker_folded = marker.to_lowercase();
         let start = if marker.is_empty() {
             0
         } else {
             children
                 .iter()
-                .position(|child| self.names.name(child).to_lowercase() == marker_folded)
+                .position(|child| equivalent(self.names.name(child), &marker))
                 .map_or(0, |position| position + 1)
         };
         let mut cursor = 0u32;
@@ -400,81 +398,6 @@ fn read_only_security_descriptor() -> Result<Vec<u8>> {
     result
 }
 
-fn initialize_winfsp() -> Result<winfsp::FspInit> {
-    if let Ok(init) = winfsp_init() {
-        return Ok(init);
-    }
-    let install_dir = [w!("SOFTWARE\\WOW6432Node\\WinFsp"), w!("SOFTWARE\\WinFsp")]
-        .into_iter()
-        .find_map(read_install_dir)
-        .context("WinFsp runtime is unavailable; install it from https://winfsp.dev/rel/")?;
-    let dll = std::path::PathBuf::from(install_dir).join("bin/winfsp-x64.dll");
-    let dll = HSTRING::from(dll.as_os_str());
-    unsafe { LoadLibraryW(&dll) }.context("Unable to load the installed WinFsp runtime")?;
-    winfsp_init().context("Unable to initialize the installed WinFsp runtime")
-}
-
-fn read_install_dir(key: PCWSTR) -> Option<std::ffi::OsString> {
-    use std::os::windows::ffi::OsStringExt;
-    let mut buffer = [0u16; 512];
-    let mut bytes = (buffer.len() * std::mem::size_of::<u16>()) as u32;
-    let status = unsafe {
-        RegGetValueW(
-            HKEY_LOCAL_MACHINE,
-            key,
-            w!("InstallDir"),
-            RRF_RT_REG_SZ,
-            None,
-            Some(buffer.as_mut_ptr().cast()),
-            Some(&mut bytes),
-        )
-    };
-    if status.is_err() {
-        return None;
-    }
-    let length = (bytes as usize / std::mem::size_of::<u16>()).saturating_sub(1);
-    Some(std::ffi::OsString::from_wide(&buffer[..length]))
-}
-
-struct PreparedDirectoryMountpoint {
-    original_path: std::path::PathBuf,
-    mount_path: std::path::PathBuf,
-}
-
-impl Drop for PreparedDirectoryMountpoint {
-    fn drop(&mut self) {
-        let _ = std::fs::create_dir_all(&self.original_path);
-    }
-}
-
-fn prepare_directory_mountpoint(path: &Path) -> Result<Option<PreparedDirectoryMountpoint>> {
-    if path.to_string_lossy().eq_ignore_ascii_case("auto") || is_drive_letter(path) {
-        return Ok(None);
-    }
-    let absolute: std::path::PathBuf = std::path::absolute(path)?.components().collect();
-    std::fs::create_dir_all(&absolute).context("Unable to create WinFsp mount directory")?;
-    let metadata = std::fs::symlink_metadata(&absolute)?;
-    use std::os::windows::fs::MetadataExt;
-    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
-    if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-        anyhow::bail!("WinFsp mount directory cannot be a reparse point");
-    }
-    if std::fs::read_dir(&absolute)?.next().is_some() {
-        anyhow::bail!("WinFsp mount directory must be empty");
-    }
-    std::fs::remove_dir(&absolute).context("Unable to prepare the empty WinFsp mount directory")?;
-    Ok(Some(PreparedDirectoryMountpoint {
-        original_path: absolute.clone(),
-        mount_path: absolute,
-    }))
-}
-
-fn is_drive_letter(path: &Path) -> bool {
-    let text = path.as_os_str().to_string_lossy();
-    let bytes = text.as_bytes();
-    bytes.len() == 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
-}
-
 fn attributes(node: &Node) -> u32 {
     if node.kind == NodeKind::Directory {
         FILE_ATTRIBUTE_DIRECTORY.0
@@ -506,7 +429,121 @@ fn map_error(error: FsError) -> winfsp::FspError {
 mod tests {
     use super::*;
 
+    const CRASH_TEST_NAME: &str = "winfsp_mount::tests::hard_termination_folder_mount_recovers";
+
     #[test]
+    fn directory_mount_rejects_reparse_ancestor() {
+        let temp = tempfile::tempdir().unwrap();
+        let outside = temp.path().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        let junction = temp.path().join("junction");
+        let status = std::process::Command::new("cmd")
+            .args([
+                "/c",
+                "mklink",
+                "/J",
+                junction.to_str().unwrap(),
+                outside.to_str().unwrap(),
+            ])
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert!(prepare_directory_mountpoint(&junction.join("mount")).is_err());
+        assert!(!outside.join("mount").exists());
+    }
+
+    #[test]
+    fn hard_termination_folder_mount_recovers() {
+        if std::env::var_os("CIPHERFS_WINFSP_E2E").is_none() {
+            return;
+        }
+        if std::env::var_os("CIPHERFS_WINFSP_CRASH_CHILD").is_some() {
+            let container = std::path::PathBuf::from(
+                std::env::var_os("CIPHERFS_WINFSP_CRASH_CONTAINER").unwrap(),
+            );
+            let mountpoint = std::path::PathBuf::from(
+                std::env::var_os("CIPHERFS_WINFSP_CRASH_MOUNTPOINT").unwrap(),
+            );
+            let ready =
+                std::path::PathBuf::from(std::env::var_os("CIPHERFS_WINFSP_CRASH_READY").unwrap());
+            let _init = initialize_winfsp().unwrap();
+            let filesystem = WinFspCipherFs::open(&container, "master", 0).unwrap();
+            let mut host: FileSystemHost<WinFspCipherFs> =
+                FileSystemHost::new(volume_params(), filesystem).unwrap();
+            host.start().unwrap();
+            let prepared = prepare_directory_mountpoint(&mountpoint).unwrap().unwrap();
+            host.mount(&prepared.mount_path).unwrap();
+            assert_eq!(
+                std::fs::read(mountpoint.join("file.txt")).unwrap(),
+                b"recovery"
+            );
+            std::fs::write(ready, b"mounted").unwrap();
+            std::mem::forget(prepared);
+            std::mem::forget(host);
+            std::process::abort();
+        }
+
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let container = temp.path().join("vault.cfs");
+        let mountpoint = temp.path().join("mount");
+        let ready = temp.path().join("ready");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(source.join("file.txt"), b"recovery").unwrap();
+        crate::pack::pack(
+            &source,
+            &container,
+            "master",
+            None,
+            crate::v2::MIN_ARGON_MEMORY_KIB,
+            1,
+            1,
+            crate::v2::MAX_INDEX_SIZE,
+            1,
+        )
+        .unwrap();
+
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([CRASH_TEST_NAME, "--exact", "--nocapture"])
+            .env("CIPHERFS_WINFSP_CRASH_CHILD", "1")
+            .env("CIPHERFS_WINFSP_CRASH_CONTAINER", &container)
+            .env("CIPHERFS_WINFSP_CRASH_MOUNTPOINT", &mountpoint)
+            .env("CIPHERFS_WINFSP_CRASH_READY", &ready)
+            .status()
+            .unwrap();
+        assert!(!status.success());
+        assert!(ready.is_file(), "child did not reach the mounted state");
+
+        for _ in 0..50 {
+            let recovered = !mountpoint.exists()
+                || std::fs::read_dir(&mountpoint)
+                    .map(|mut entries| entries.next().is_none())
+                    .unwrap_or(false);
+            if recovered {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+
+        let _init = initialize_winfsp().unwrap();
+        let filesystem = WinFspCipherFs::open(&container, "master", 0).unwrap();
+        let mut host: FileSystemHost<WinFspCipherFs> =
+            FileSystemHost::new(volume_params(), filesystem).unwrap();
+        host.start().unwrap();
+        let prepared = prepare_directory_mountpoint(&mountpoint).unwrap().unwrap();
+        host.mount(&prepared.mount_path).unwrap();
+        assert_eq!(
+            std::fs::read(mountpoint.join("file.txt")).unwrap(),
+            b"recovery"
+        );
+        host.unmount();
+        host.stop();
+        drop(prepared);
+        assert!(mountpoint.is_dir());
+    }
+
+    #[test]
+    #[allow(clippy::permissions_set_readonly_false)]
     fn runtime_mount_reads_files_and_rejects_mutation() {
         if std::env::var_os("CIPHERFS_WINFSP_E2E").is_none() {
             return;
@@ -579,6 +616,28 @@ mod tests {
         assert!(std::path::Path::new(&format!("{drive_mount}\\empty")).is_dir());
         assert!(std::fs::write(format!("{drive_mount}\\small.txt"), b"changed").is_err());
         assert!(std::fs::write(format!("{drive_mount}\\new.txt"), b"new").is_err());
+        assert!(std::fs::remove_file(format!("{drive_mount}\\small.txt")).is_err());
+        assert!(
+            std::fs::rename(
+                format!("{drive_mount}\\small.txt"),
+                format!("{drive_mount}\\renamed.txt")
+            )
+            .is_err()
+        );
+        assert!(
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(format!("{drive_mount}\\small.txt"))
+                .and_then(|file| file.set_len(1))
+                .is_err()
+        );
+        let mut permissions = std::fs::metadata(format!("{drive_mount}\\small.txt"))
+            .unwrap()
+            .permissions();
+        permissions.set_readonly(false);
+        assert!(
+            std::fs::set_permissions(format!("{drive_mount}\\small.txt"), permissions).is_err()
+        );
         drive_host.unmount();
         drive_host.stop();
 
@@ -626,7 +685,11 @@ mod tests {
         corrupt_host.mount(&corrupt_mount).unwrap();
         let small_result = std::fs::read(format!("{corrupt_mount}\\small.txt"));
         let boundary_result = std::fs::read(format!("{corrupt_mount}\\boundary.bin"));
-        assert!(small_result.is_err() || boundary_result.is_err());
+        assert!(
+            small_result.is_err(),
+            "the specifically corrupted file was readable"
+        );
+        assert_eq!(boundary_result.unwrap(), boundary);
         corrupt_host.unmount();
         corrupt_host.stop();
     }

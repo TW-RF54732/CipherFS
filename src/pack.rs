@@ -4,6 +4,7 @@ use rand::Rng;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 use zeroize::{Zeroize, Zeroizing};
@@ -27,6 +28,13 @@ type ScanResult = (Vec<Entry>, Vec<(u64, SourceSnapshot)>, u64, u64);
 struct TempOutput {
     path: PathBuf,
     keep: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PackFault {
+    None,
+    OutputAfterTemp,
+    SourceChangedAfterScan,
 }
 
 impl Drop for TempOutput {
@@ -59,6 +67,7 @@ pub fn pack(
             argon2_t_cost,
             argon2_p_cost,
             max_index_size,
+            PackFault::None,
         )
     })
 }
@@ -73,11 +82,12 @@ fn pack_inner(
     argon2_t_cost: u32,
     argon2_p_cost: u32,
     max_index_size: u64,
+    injected_fault: PackFault,
 ) -> Result<()> {
-    let source_meta = std::fs::metadata(source_dir)
+    let source_meta = std::fs::symlink_metadata(source_dir)
         .with_context(|| format!("Unable to inspect {}", source_dir.display()))?;
-    if !source_meta.is_dir() {
-        anyhow::bail!("Pack source must be a directory");
+    if !source_meta.is_dir() || is_reparse_point(&source_meta) {
+        anyhow::bail!("Pack source must be a real directory, not a link or reparse point");
     }
     if duress_password.is_some_and(|duress| duress == password) {
         anyhow::bail!("Duress password must differ from the master password");
@@ -167,6 +177,18 @@ fn pack_inner(
     output.write_all_at(&v2::serialize_header(&header)?, 0)?;
     output.write_all_at(&encrypted_index, HEADER_SIZE as u64)?;
     encrypted_index.zeroize();
+    if injected_fault == PackFault::OutputAfterTemp {
+        anyhow::bail!("Injected container output failure");
+    }
+    if injected_fault == PackFault::SourceChangedAfterScan {
+        let source = sources
+            .first()
+            .context("Injected source-change test requires a source file")?;
+        OpenOptions::new()
+            .append(true)
+            .open(&source.1.path)?
+            .write_all(b"changed")?;
+    }
 
     let progress = ProgressBar::new(total_plaintext);
     progress.set_style(
@@ -203,9 +225,11 @@ fn pack_inner(
     v2::verify_all(&opened).context("Self-verification of packed container failed")?;
     drop(opened);
 
-    std::fs::rename(&temp_path, output_file)
+    rename_file_no_replace(&temp_path, output_file)
         .with_context(|| format!("Unable to install {}", output_file.display()))?;
-    sync_parent(output_parent(output_file))?;
+    if let Err(error) = sync_parent(output_parent(output_file)) {
+        eprintln!("[Warning] Unable to sync output parent after commit: {error:#}");
+    }
     temp_guard.keep = true;
     println!("[Success] {} created and verified.", output_file.display());
     Ok(())
@@ -263,7 +287,12 @@ fn scan_source(source_dir: &Path) -> Result<ScanResult> {
         let metadata = std::fs::symlink_metadata(item.path())?;
         let id = next_id;
         next_id = next_id.checked_add(1).context("Entry id overflow")?;
-        if metadata.is_dir() {
+        if is_reparse_point(&metadata) {
+            anyhow::bail!(
+                "Refusing to pack a link or Windows reparse point: {}",
+                item.path().display()
+            );
+        } else if metadata.is_dir() {
             entries.push(Entry {
                 id,
                 parent_id,
@@ -389,6 +418,44 @@ fn ensure_unchanged(snapshot: &SourceSnapshot, file: &File) -> Result<()> {
     Ok(())
 }
 
+#[cfg(windows)]
+fn is_reparse_point(metadata: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    metadata.file_attributes() & 0x400 != 0
+}
+
+#[cfg(not(windows))]
+fn is_reparse_point(metadata: &std::fs::Metadata) -> bool {
+    metadata.file_type().is_symlink()
+}
+
+#[cfg(unix)]
+fn rename_file_no_replace(source: &Path, target: &Path) -> Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+    let source = std::ffi::CString::new(source.as_os_str().as_bytes())?;
+    let target = std::ffi::CString::new(target.as_os_str().as_bytes())?;
+    let result = unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
+            libc::AT_FDCWD,
+            source.as_ptr(),
+            libc::AT_FDCWD,
+            target.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    } as libc::c_int;
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error().into())
+    }
+}
+
+#[cfg(windows)]
+fn rename_file_no_replace(source: &Path, target: &Path) -> Result<()> {
+    crate::windows_fs::rename_no_replace(source, target)
+}
+
 #[cfg(unix)]
 fn sync_parent(path: &Path) -> Result<()> {
     File::open(path)?.sync_all()?;
@@ -438,6 +505,68 @@ mod tests {
             output_parent(Path::new("containers/vault.cfs")),
             Path::new("containers")
         );
+    }
+
+    #[test]
+    fn injected_output_failure_removes_temporary_container() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let output = temp.path().join("vault.cfs");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(source.join("file.bin"), b"private").unwrap();
+
+        let error = pack_inner(
+            &source,
+            &output,
+            "password",
+            None,
+            crate::v2::MIN_ARGON_MEMORY_KIB,
+            1,
+            1,
+            16 * 1024 * 1024,
+            PackFault::OutputAfterTemp,
+        )
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("Injected container output failure"));
+        assert!(!output.exists());
+        assert!(std::fs::read_dir(temp.path()).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".vault.cfs.")
+        }));
+    }
+
+    #[test]
+    fn source_change_after_scan_aborts_and_removes_temporary_container() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let output = temp.path().join("vault.cfs");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(source.join("file.bin"), b"private").unwrap();
+
+        let error = pack_inner(
+            &source,
+            &output,
+            "password",
+            None,
+            crate::v2::MIN_ARGON_MEMORY_KIB,
+            1,
+            1,
+            16 * 1024 * 1024,
+            PackFault::SourceChangedAfterScan,
+        )
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("Source file changed while packing"));
+        assert!(!output.exists());
+        assert!(std::fs::read_dir(temp.path()).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".vault.cfs.")
+        }));
     }
 
     #[test]
@@ -512,11 +641,7 @@ mod tests {
         drop(opened);
         let failed_extract = temp.path().join("failed-extract");
         assert!(crate::extract::extract_v2(&replay_copy, &failed_extract, "master", 2).is_err());
-        assert!(
-            std::fs::read_dir(&failed_extract)
-                .unwrap()
-                .all(|entry| entry.unwrap().file_type().unwrap().is_dir())
-        );
+        assert!(!failed_extract.exists());
 
         let appended = temp.path().join("appended.cfs");
         std::fs::copy(&container, &appended).unwrap();

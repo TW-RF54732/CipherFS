@@ -1,6 +1,9 @@
 # Releasing CipherFS
 
-Releases are produced only after local Linux tests and the GitHub test job pass.
+Releases are produced only after Windows and Linux runtime tests and all GitHub
+release gates pass. A cross-compile is never recorded as a FUSE or WinFsp
+runtime validation; the pinned GitHub Linux runner may be the authoritative
+Linux environment when the local WSL toolchain is not cleanly reproducible.
 
 ## One-time Signing Setup
 
@@ -20,13 +23,35 @@ after that release is deployed.
 
 ## Release Checklist
 
-1. Run on Linux or WSL: `cargo fmt --check`.
-2. Run: `cargo clippy --locked --all-targets -- -D warnings`.
-3. Run: `cargo test --locked`.
-4. Run the release build and pack/verify/extract/mount E2E workflow locally.
-5. Update README, `FORMAT_V2.md`, and the matching release note.
-6. Confirm `Cargo.toml` and `Cargo.lock` contain the release version.
-7. Tag that tested commit as `vX.Y.Z`.
+1. Confirm the branch, clean worktree, recent commits, `.github` workflows and
+   intended version. Do not stage unrelated changes.
+2. On a clean Windows runner before WinFsp installation, verify non-mount CLI
+   startup, the PE delay import, and the missing-runtime error/install URL.
+   Then, on Windows with the official WinFsp runtime installed, run:
+   `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`,
+   `cargo test --locked -- --test-threads=1`, the release build, and actual
+   folder/drive/`auto` mount smoke including corruption and Ctrl+C unmount.
+3. On the pinned GitHub Linux runner with FUSE 3 and `musl-tools`, repeat fmt,
+   Clippy, tests,
+   `cargo build --locked --release --target x86_64-unknown-linux-musl`, and the
+   FUSE pack/read/corruption/unmount smoke.
+4. Run `cargo audit --ignore RUSTSEC-2024-0436` and
+   `cargo deny --locked check advisories licenses sources`. The paste advisory
+   is the only accepted warning and must be reconsidered every release.
+5. Update README, SECURITY, `FORMAT_V2.md`, testing instructions and the exact
+   release note. Regenerate `THIRD_PARTY_DEPENDENCIES.md`; confirm the GPLv3
+   text, third-party notices and vendored WinFsp provenance are current.
+6. For a release candidate set the Cargo version and note to `X.Y.Z-rc.N`, run
+   every local gate, then push/tag `vX.Y.Z-rc.N`. Download and test both CI
+   artifacts on clean platform installations.
+7. After the candidate passes, set the final `X.Y.Z` version/note, repeat every
+   local gate, and only then push/tag `vX.Y.Z`.
+8. The final workflow creates a draft release. Download the exact draft assets,
+   verify Minisign, SHA-256, Artifact Attestation, `--version`, `licenses`, and
+   one real mount on each platform before publishing the draft. Until publish,
+   `/releases/latest` and the updater must continue to point at the old release.
 
-The tag workflow builds once, tests that binary, signs a canonical manifest,
-creates GitHub Artifact Attestations, and publishes the tested artifacts.
+The tag workflow does not rebuild in the release job. It downloads only the
+Linux and Windows binaries already produced by their runtime-tested jobs,
+packages licenses/source, signs canonical manifests, creates attestations and
+then creates the prerelease or final draft.

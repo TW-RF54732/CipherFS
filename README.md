@@ -32,7 +32,7 @@ flowchart LR
 
     subgraph ACCESS["Verified access paths"]
         OPEN["Format and bounds validation<br/>AEAD authentication"]
-        CORE["Platform-neutral read-only core<br/>v1 + v2 random access"]
+        CORE["Platform-neutral read-only core<br/>v2 random access"]
         FUSE["Linux FUSE adapter"]
         WINFSP["Windows WinFsp adapter"]
         EXTRACT["Safe extraction<br/>capability root + no link traversal"]
@@ -60,8 +60,8 @@ flowchart LR
 | --- | --- |
 | Systems programming | Shared read-only core, Linux FUSE and Windows WinFsp adapters, range reads, bounded chunk cache |
 | Applied cryptography | Password KDF, key hierarchy, domain-separated keys, AEAD-bound metadata and chunks |
-| Storage design | Versioned container format, encrypted index, random-access chunk layout, v1 compatibility |
-| Defensive I/O | Overflow and resource limits, atomic pack/replace, source-change detection, safe extraction |
+| Storage design | Versioned v2 container format, encrypted index, authenticated random-access chunk layout |
+| Defensive I/O | Overflow/resource limits, atomic pack/replace, source-change detection, whole-tree atomic extraction |
 | Verification and delivery | Tamper/replay/truncation tests, Linux FUSE and Windows WinFsp E2E jobs, signed self-update releases |
 
 > [!WARNING]
@@ -75,9 +75,11 @@ flowchart LR
 ## Project Status
 
 - Experimental and developed as a side project.
-- APIs, file formats, and behavior may change without notice.
-- Testing currently covers basic pack, extract, and mount workflows; it does
-  not establish security, reliability, data-recovery, or performance guarantees.
+- v2.2.0 is the first release with supported Linux and Windows release gates;
+  the project status remains experimental rather than security-audited.
+- Testing covers v2 pack, verify, atomic extract, FUSE and WinFsp read-only
+  mounts, corruption failure, and signed release metadata. This does not
+  establish security, data-recovery, or performance guarantees.
 - Bug reports and contributions are welcome, but maintenance and support are
   provided on a best-effort basis.
 
@@ -117,10 +119,16 @@ snapshots, SSD remapping, and previously recovered keys can defeat it.
 ## Container Compatibility
 
 - New containers are always written in the CipherFS v2 format.
-- v1 containers can still be mounted or extracted, with a legacy warning.
-- v1 containers cannot use `passwd` or the full `verify` command.
-- There is no automatic migration. Extract a v1 container and pack the result
-  again to create a v2 container.
+- CipherFS v2.2.0 supports only v2 containers. Every command rejects v1 before
+  prompting for a password or allocating container-controlled resources.
+- Existing v2 containers remain compatible; the v2 on-disk format is unchanged.
+
+### Legacy v1 Migration
+
+There is no v1 reader in the stable binary. To migrate a trusted v1 container,
+use the archived `v2.2.0-beta.1` (or an earlier compatible release) to extract
+it, then pack that directory with v2.2.0. Never use the legacy reader for an
+untrusted container.
 
 ## Installation
 
@@ -146,8 +154,12 @@ experimental status and limitations described above.
 ### Build from Source
 
 ```bash
-cargo build --release
+cargo build --locked --release
 ```
+
+The repository pins the Rust toolchain. Linux release artifacts target
+`x86_64-unknown-linux-musl`; Windows artifacts target
+`x86_64-pc-windows-msvc`.
 
 ## Usage
 
@@ -177,16 +189,21 @@ names and reported as warnings; the encrypted container is not modified.
 Run `cipherfs licenses` to view the bundled third-party attribution and
 no-warranty notice.
 
+PowerShell users must run `cipherfs.exe`. Windows includes an unrelated command
+named `cipher.exe`; it is not CipherFS. Use `Get-Command cipherfs.exe` when
+checking which executable is on `PATH`.
+
 ### Extract a Container
 
 ```bash
 ./cipherfs extract <container.cfs> <output_dir> [--threads 0]
 ```
 
-Extraction rejects unsafe paths and symbolic-link traversal. A file is installed
-under its final name only after every encrypted chunk has authenticated. Chunk
-decryption is concurrent, while a bounded ordered buffer preserves file order
-without retaining an entire large file in memory.
+`<output_dir>` must not exist. Extraction builds a private sibling staging tree,
+authenticates and flushes every file, then installs the complete directory with
+one no-replace atomic rename. Corruption or any pre-commit I/O/name failure
+removes staging and leaves no output directory. Ancestor symlinks, junctions,
+and Windows reparse points are rejected.
 
 ### Verify Without Extracting
 
@@ -238,6 +255,20 @@ Windows releases are portable and may trigger SmartScreen because CipherFS does
 not currently have an Authenticode certificate. Release manifests remain
 Minisign-signed and include SHA-256 hashes.
 
+CipherFS stores file contents, names and directory structure. It does not
+preserve platform ACLs, ownership, timestamps, xattrs, alternate data streams,
+hard-link identity, sparse allocation or filesystem-specific metadata.
+
+## Testing
+
+Before a release, both platforms run formatting, Clippy with warnings denied,
+unit tests and release builds. Linux additionally runs real FUSE pack/read/
+corruption/unmount E2E. Windows first proves non-mount commands start without
+WinFsp, then installs the pinned official runtime and runs folder, drive and
+`auto` WinFsp E2E. Dependency advisories, license policy, CodeQL and signed
+artifact verification are release gates. See [RELEASING.md](RELEASING.md) for
+the local and CI checklist.
+
 ## Security Boundaries
 
 CipherFS is intended to keep an offline container private from casual access
@@ -252,8 +283,10 @@ See [SECURITY.md](SECURITY.md) for the threat model and reporting guidance, and
 
 CipherFS-authored source is available under the [MIT License](LICENSE). The
 Windows executable incorporates the GPLv3 `winfsp-rs` binding and is distributed
-subject to GPLv3 for the combined binary. Run `cipherfs licenses` or see
+subject to GPLv3 for the combined binary. The full text is in
+[LICENSE-GPL-3.0](LICENSE-GPL-3.0). Run `cipherfs licenses` or see
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the complete distinction
-and WinFsp attribution.
+and WinFsp attribution. The locked dependency list and exact-version source
+URLs are in [THIRD_PARTY_DEPENDENCIES.md](THIRD_PARTY_DEPENDENCIES.md).
 
 This README is a practical project warning, not legal or security advice.

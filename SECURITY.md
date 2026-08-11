@@ -9,14 +9,19 @@ would be embarrassing or inconvenient if casually viewed.
 - File contents, names, sizes, and directory structure inside an offline
   container when the password and derived keys are unknown.
 - Integrity of the authenticated v2 header, index, and individual file chunks.
-- Extraction roots from `..`, absolute-path, and symbolic-link traversal.
-- Users from treating partially decrypted files as successful extraction.
+- Extraction roots from `..`, absolute paths, symlink, junction and reparse
+  point traversal. Extraction has one whole-directory commit point.
+- Users from treating partially decrypted or partially committed files as a
+  successful extraction.
 - Automatic updates from unsigned or hash-mismatched release assets.
 
 ## What It Does Not Protect
 
 - Weak, empty, guessed, reused, logged, or observed passwords.
 - Plaintext and the DEK while a container is mounted or being extracted.
+- Decrypted chunks retained in the configured in-process mount cache until
+  eviction or process exit; buffers are cleared on normal drop, not guaranteed
+  against crash dumps or hostile same-user processes.
 - A system already controlled by malware, another same-user process, root, a
   debugger, core dumps, swap, or hibernation.
 - Complete copying, replacement, or replay of an otherwise valid container.
@@ -34,8 +39,8 @@ When entered, CipherFS overwrites both wrapped DEK keyslots and synchronizes the
 header. This is a best-effort experiment, not secure erase. Any other copy of
 the wrapped DEK, the live DEK, or the container can preserve access.
 
-Legacy v1 containers use a public, fast BLAKE3 password verifier and should not
-be treated as providing strong Duress protection.
+Legacy v1 containers used a public, fast BLAKE3 password verifier. CipherFS
+v2.2.0 does not include the v1 reader.
 
 ## Untrusted Containers
 
@@ -44,8 +49,9 @@ contiguity, and exact container size before extraction. Resource limits remain
 important. Decrypt untrusted containers as an unprivileged user and avoid
 automatically opening their contents.
 
-v1 support exists only for compatibility. Do not open an untrusted v1
-container; extract trusted v1 data and re-pack it as v2.
+v1 is detected only to return an unsupported-format migration message. If a
+trusted v1 container must be migrated, use an archived beta in an isolated
+environment, extract it and immediately re-pack it as v2.
 
 ## Reporting
 

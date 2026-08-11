@@ -1,0 +1,97 @@
+#!/usr/bin/expect -f
+
+set timeout 240
+set binary [lindex $argv 0]
+set case_dir [lindex $argv 1]
+if {$binary eq "" || $case_dir eq ""} {
+    puts stderr "usage: linux_e2e.exp <cipherfs-binary> <case-directory>"
+    exit 2
+}
+
+proc child_exit_code {} {
+    catch wait result
+    return [lindex $result 3]
+}
+
+spawn $binary pack $case_dir/source $case_dir/vault.cfs --m-cost 8192 --t-cost 1 --p-cost 1
+expect "Set Master Password:"
+send "pass123\r"
+expect "Verify Master Password:"
+send "pass123\r"
+expect "Set Duress Password (optional):"
+send "\r"
+expect eof
+if {[child_exit_code] != 0} { exit 1 }
+
+spawn $binary verify $case_dir/vault.cfs
+expect "Enter Password:"
+send "pass123\r"
+expect eof
+if {[child_exit_code] != 0} { exit 1 }
+
+spawn $binary extract $case_dir/vault.cfs $case_dir/extract
+expect "Enter Password:"
+send "pass123\r"
+expect eof
+if {[child_exit_code] != 0} { exit 1 }
+if {[catch {exec diff -r $case_dir/source $case_dir/extract} message]} {
+    puts stderr "extract diff failed: $message"
+    exit 1
+}
+
+spawn $binary mount $case_dir/vault.cfs $case_dir/mount --cache-mib 16
+expect "Enter Password:"
+send "pass123\r"
+expect "CipherFS is mounted read-only."
+after 500
+if {[catch {exec diff -r $case_dir/source $case_dir/mount} message]} {
+    puts stderr "mount diff failed: $message"
+    exit 1
+}
+if {![catch {exec sh -c "printf changed > '$case_dir/mount/secret.txt'"}]} {
+    puts stderr "read-only FUSE mount accepted a write"
+    exit 1
+}
+send "\003"
+expect eof
+
+file copy -force $case_dir/vault.cfs $case_dir/corrupt.cfs
+set handle [open $case_dir/corrupt.cfs r+]
+fconfigure $handle -translation binary -encoding binary
+seek $handle -1 end
+binary scan [read $handle 1] c byte
+seek $handle -1 end
+puts -nonewline $handle [binary format c [expr {$byte ^ 1}]]
+flush $handle
+close $handle
+
+spawn $binary extract $case_dir/corrupt.cfs $case_dir/corrupt-extract
+expect "Enter Password:"
+send "pass123\r"
+expect eof
+if {[child_exit_code] == 0} {
+    puts stderr "corrupt extraction unexpectedly succeeded"
+    exit 1
+}
+if {[file exists $case_dir/corrupt-extract]} {
+    puts stderr "corrupt extraction left a committed destination"
+    exit 1
+}
+
+spawn $binary mount $case_dir/corrupt.cfs $case_dir/corrupt-mount --cache-mib 0
+expect "Enter Password:"
+send "pass123\r"
+expect "CipherFS is mounted read-only."
+after 500
+if {[catch {exec cat $case_dir/corrupt-mount/boundary.bin > /dev/null} message]} {
+    puts stderr "untampered file read failed: $message"
+    exit 1
+}
+if {![catch {exec cat $case_dir/corrupt-mount/secret.txt > /dev/null}]} {
+    puts stderr "corrupted file returned plaintext"
+    exit 1
+}
+send "\003"
+expect eof
+
+puts "LINUX_FUSE_E2E_OK"
