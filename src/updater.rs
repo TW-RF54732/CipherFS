@@ -94,9 +94,7 @@ pub fn update_interactive() -> Result<()> {
     let manifest_text =
         std::str::from_utf8(&manifest_bytes).context("Update manifest is not UTF-8")?;
     let manifest = parse_manifest(manifest_text)?;
-    if manifest.version != latest || manifest.target != TARGET || manifest.asset != BINARY_ASSET {
-        anyhow::bail!("Signed update manifest does not match this release/target");
-    }
+    validate_manifest_for_update(&manifest, &latest, &current, TARGET, BINARY_ASSET)?;
 
     println!(
         "[Info] Signed update available: {} (Current: {})",
@@ -119,13 +117,7 @@ pub fn update_interactive() -> Result<()> {
 
     let binary_url = asset_url(&release, &manifest.asset)?;
     let binary = download(&client, binary_url)?;
-    if binary.len() as u64 != manifest.size {
-        anyhow::bail!("Downloaded binary size does not match signed manifest");
-    }
-    let digest = hex::encode(Sha256::digest(&binary));
-    if !digest.eq_ignore_ascii_case(&manifest.sha256) {
-        anyhow::bail!("Downloaded binary hash does not match signed manifest");
-    }
+    validate_downloaded_binary(&binary, &manifest)?;
 
     let current_exe = std::env::current_exe()?;
     let parent = current_exe
@@ -271,6 +263,37 @@ fn parse_manifest(text: &str) -> Result<Manifest> {
     })
 }
 
+fn validate_manifest_for_update(
+    manifest: &Manifest,
+    latest: &Version,
+    current: &Version,
+    target: &str,
+    binary_asset: &str,
+) -> Result<()> {
+    if latest <= current {
+        anyhow::bail!("Refusing a non-upgrade release");
+    }
+    if &manifest.version != latest
+        || manifest.target != target
+        || manifest.asset != binary_asset
+        || manifest.size == 0
+    {
+        anyhow::bail!("Signed update manifest does not match this release/target");
+    }
+    Ok(())
+}
+
+fn validate_downloaded_binary(binary: &[u8], manifest: &Manifest) -> Result<()> {
+    if binary.len() as u64 != manifest.size {
+        anyhow::bail!("Downloaded binary size does not match signed manifest");
+    }
+    let digest = hex::encode(Sha256::digest(binary));
+    if !digest.eq_ignore_ascii_case(&manifest.sha256) {
+        anyhow::bail!("Downloaded binary hash does not match signed manifest");
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -291,8 +314,79 @@ mod tests {
     }
 
     #[test]
+    fn wrong_target_downgrade_and_empty_asset_are_rejected() {
+        let mut manifest = Manifest {
+            version: Version::new(2, 2, 0),
+            target: "x86_64-pc-windows-msvc".to_string(),
+            asset: "cipherfs.exe".to_string(),
+            size: 12,
+            sha256: "a".repeat(64),
+        };
+        let latest = Version::new(2, 2, 0);
+        let current = Version::new(2, 1, 0);
+        assert!(
+            validate_manifest_for_update(
+                &manifest,
+                &latest,
+                &current,
+                "x86_64-pc-windows-msvc",
+                "cipherfs.exe"
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_manifest_for_update(
+                &manifest,
+                &latest,
+                &latest,
+                "x86_64-pc-windows-msvc",
+                "cipherfs.exe"
+            )
+            .is_err()
+        );
+        assert!(
+            validate_manifest_for_update(
+                &manifest,
+                &latest,
+                &current,
+                "x86_64-unknown-linux-musl",
+                "cipherfs"
+            )
+            .is_err()
+        );
+        manifest.size = 0;
+        assert!(
+            validate_manifest_for_update(
+                &manifest,
+                &latest,
+                &current,
+                "x86_64-pc-windows-msvc",
+                "cipherfs.exe"
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
     fn release_notes_cannot_emit_terminal_control_sequences() {
         assert_eq!(terminal_safe("safe\u{1b}[31m\nnext"), "safe[31m\nnext");
+    }
+
+    #[test]
+    fn truncated_and_modified_downloads_are_rejected() {
+        let complete = b"complete release binary";
+        let manifest = Manifest {
+            version: Version::new(2, 2, 0),
+            target: TARGET.to_string(),
+            asset: BINARY_ASSET.to_string(),
+            size: complete.len() as u64,
+            sha256: hex::encode(Sha256::digest(complete)),
+        };
+        assert!(validate_downloaded_binary(complete, &manifest).is_ok());
+        assert!(validate_downloaded_binary(&complete[..complete.len() - 1], &manifest).is_err());
+        let mut modified = complete.to_vec();
+        modified[0] ^= 1;
+        assert!(validate_downloaded_binary(&modified, &manifest).is_err());
     }
 
     #[test]
@@ -309,5 +403,49 @@ mod tests {
         assert!(verify_manifest_signature(key, b"test", signature).is_ok());
         assert!(verify_manifest_signature(&format!("invalid,{key}"), b"test", signature).is_ok());
         assert!(verify_manifest_signature(key, b"Test", signature).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_self_replace_child() {
+        let Some(replacement) = std::env::var_os("CIPHERFS_SELF_REPLACE_SOURCE") else {
+            return;
+        };
+        let marker = std::env::var_os("CIPHERFS_SELF_REPLACE_MARKER")
+            .expect("replacement child marker is required");
+        self_replace::self_replace(replacement).expect("running executable replacement failed");
+        std::fs::write(marker, b"replaced").expect("unable to write replacement child marker");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_running_executable_is_replaced_by_child_process() {
+        let temp = tempfile::tempdir().unwrap();
+        let runner = temp.path().join("updater-child.exe");
+        let replacement = temp.path().join("replacement.exe");
+        let marker = temp.path().join("replacement.marker");
+        std::fs::copy(std::env::current_exe().unwrap(), &runner).unwrap();
+        let replacement_bytes = b"MZ\x90\0cipherfs replacement test payload";
+        std::fs::write(&replacement, replacement_bytes).unwrap();
+
+        let status = std::process::Command::new(&runner)
+            .args([
+                "--exact",
+                "updater::tests::windows_self_replace_child",
+                "--nocapture",
+            ])
+            .env("CIPHERFS_SELF_REPLACE_SOURCE", &replacement)
+            .env("CIPHERFS_SELF_REPLACE_MARKER", &marker)
+            .env("TEMP", temp.path())
+            .env("TMP", temp.path())
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert_eq!(std::fs::read(&runner).unwrap(), replacement_bytes);
+        assert_eq!(std::fs::read(&marker).unwrap(), b"replaced");
+        assert!(
+            replacement.exists(),
+            "source replacement should remain available"
+        );
     }
 }

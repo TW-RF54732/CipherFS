@@ -15,53 +15,16 @@ pub fn extract_v2(
     threads: usize,
 ) -> Result<()> {
     crate::parallel::install(threads, || {
-        extract_v2_inner(container_path, output_dir, password)
+        extract_v2_inner(container_path, output_dir, password, None)
     })
 }
 
-#[cfg(windows)]
-pub fn extract_v1_windows(container_path: &Path, output_dir: &Path, password: &str) -> Result<()> {
-    use crate::readonly_fs::{NodeKind, ReadOnlyFs};
-    let filesystem = ReadOnlyFs::open(container_path, password, 0)?;
-    let mut nodes = vec![filesystem.metadata(1)?];
-    let mut cursor = 0;
-    while cursor < nodes.len() {
-        if nodes[cursor].kind == NodeKind::Directory {
-            nodes.extend(filesystem.read_dir(nodes[cursor].id)?);
-        }
-        cursor += 1;
-    }
-    let names = crate::windows_names::WindowsNameMap::new(&nodes);
-    names.warn();
-    let mut root = SafeRoot::open(output_dir)?;
-    root.install_root_id(1)?;
-    let mut pending_files = Vec::new();
-    for node in nodes.iter().filter(|node| node.id != 1) {
-        let output_name = names.name(node);
-        match node.kind {
-            NodeKind::Directory => root.create_directory(node.id, node.parent_id, output_name)?,
-            NodeKind::File => {
-                let mut pending = root.begin_file(node.parent_id, output_name, node.id)?;
-                let mut offset = 0u64;
-                while offset < node.size {
-                    let request = (node.size - offset).min(1024 * 1024) as u32;
-                    let plaintext = filesystem.read(node.id, offset, request)?;
-                    pending.writer()?.write_all(&plaintext)?;
-                    offset += plaintext.len() as u64;
-                }
-                pending.finish_writing()?;
-                pending_files.push(pending);
-            }
-        }
-    }
-    for pending in pending_files {
-        pending.commit()?;
-    }
-    println!("[Success] Legacy extraction complete.");
-    Ok(())
-}
-
-fn extract_v2_inner(container_path: &Path, output_dir: &Path, password: &str) -> Result<()> {
+fn extract_v2_inner(
+    container_path: &Path,
+    output_dir: &Path,
+    password: &str,
+    inject_write_failure_after: Option<u64>,
+) -> Result<()> {
     let opened = v2::open(container_path, password)?;
     #[cfg(windows)]
     let windows_names = {
@@ -91,7 +54,7 @@ fn extract_v2_inner(container_path: &Path, output_dir: &Path, password: &str) ->
             .progress_chars("#>-"),
     );
 
-    let mut root = SafeRoot::open(output_dir)?;
+    let mut root = SafeRoot::open_new(output_dir)?;
     root.install_root_id(1)?;
     let mut entries: Vec<_> = opened.index.entries.values().collect();
     entries.sort_by_key(|entry| (entry.depth, entry.id));
@@ -131,6 +94,11 @@ fn extract_v2_inner(container_path: &Path, output_dir: &Path, password: &str) ->
                         })
                         .collect();
                     for mut plaintext in chunks? {
+                        if inject_write_failure_after.is_some_and(|limit| {
+                            progress.position().saturating_add(plaintext.len() as u64) > limit
+                        }) {
+                            anyhow::bail!("Injected extraction write failure");
+                        }
                         pending.writer()?.write_all(&plaintext)?;
                         progress.inc(plaintext.len() as u64);
                         plaintext.zeroize();
@@ -146,7 +114,54 @@ fn extract_v2_inner(container_path: &Path, output_dir: &Path, password: &str) ->
     for pending in pending_files {
         pending.commit()?;
     }
+    root.commit()?;
     progress.finish_with_message("Verified and extracted");
     println!("[Success] Extraction complete.");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand::Rng;
+
+    fn random_test_password() -> String {
+        let mut value = [0u8; 32];
+        rand::rng().fill_bytes(&mut value);
+        hex::encode(value)
+    }
+
+    #[test]
+    fn injected_write_failure_removes_staging_and_destination() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let container = temp.path().join("vault.cfs");
+        let output = temp.path().join("output");
+        let password = random_test_password();
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(source.join("file.bin"), vec![0x5a; 8192]).unwrap();
+        crate::pack::pack(
+            &source,
+            &container,
+            &password,
+            None,
+            crate::v2::MIN_ARGON_MEMORY_KIB,
+            1,
+            1,
+            16 * 1024 * 1024,
+            1,
+        )
+        .unwrap();
+
+        let error = extract_v2_inner(&container, &output, &password, Some(1)).unwrap_err();
+        assert!(format!("{error:#}").contains("Injected extraction write failure"));
+        assert!(!output.exists());
+        assert!(std::fs::read_dir(temp.path()).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains("cipherfs-stage")
+        }));
+    }
 }

@@ -73,52 +73,33 @@ impl From<&Entry> for Node {
     }
 }
 
-pub enum ReadOnlyFs {
-    V1(Box<crate::readonly_v1::ReadOnlyV1Fs>),
-    V2(Box<ReadOnlyV2Fs>),
-}
+pub struct ReadOnlyFs(Box<ReadOnlyV2Fs>);
 
 impl ReadOnlyFs {
     pub fn open(path: &Path, password: &str, cache_mib: u64) -> anyhow::Result<Self> {
-        match crate::format::detect(path)? {
-            crate::format::Format::V1 => Ok(Self::V1(Box::new(
-                crate::readonly_v1::ReadOnlyV1Fs::new(path, password)?,
-            ))),
-            crate::format::Format::V2 => Ok(Self::V2(Box::new(ReadOnlyV2Fs::new(
-                path, password, cache_mib,
-            )?))),
-        }
+        crate::format::require_v2(path)?;
+        Ok(Self(Box::new(ReadOnlyV2Fs::new(
+            path, password, cache_mib,
+        )?)))
     }
 
     pub fn metadata(&self, id: u64) -> Result<Node, FsError> {
-        match self {
-            Self::V1(fs) => fs.metadata(id),
-            Self::V2(fs) => fs.metadata(id).map(Node::from),
-        }
+        self.0.metadata(id).map(Node::from)
     }
 
     #[cfg_attr(windows, allow(dead_code))]
     pub fn lookup(&self, parent: u64, name: &str) -> Result<Node, FsError> {
-        match self {
-            Self::V1(fs) => fs.lookup(parent, name),
-            Self::V2(fs) => fs.lookup(parent, name).map(Node::from),
-        }
+        self.0.lookup(parent, name).map(Node::from)
     }
 
     pub fn read_dir(&self, id: u64) -> Result<Vec<Node>, FsError> {
-        let mut entries = match self {
-            Self::V1(fs) => fs.read_dir(id)?,
-            Self::V2(fs) => fs.read_dir(id)?.into_iter().map(Node::from).collect(),
-        };
+        let mut entries: Vec<_> = self.0.read_dir(id)?.into_iter().map(Node::from).collect();
         entries.sort_by(|left, right| left.name.cmp(&right.name).then(left.id.cmp(&right.id)));
         Ok(entries)
     }
 
     pub fn read(&self, id: u64, offset: u64, size: u32) -> Result<Zeroizing<Vec<u8>>, FsError> {
-        match self {
-            Self::V1(fs) => fs.read(id, offset, size),
-            Self::V2(fs) => fs.read(id, offset, size),
-        }
+        self.0.read(id, offset, size)
     }
 }
 
@@ -297,15 +278,20 @@ impl ReadOnlyV2Fs {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::Rng;
     use std::io::{Seek, SeekFrom, Write};
 
-    const PASSWORD: &str = "test-password";
+    fn random_test_password() -> String {
+        let mut value = [0u8; 32];
+        rand::rng().fill_bytes(&mut value);
+        hex::encode(value)
+    }
 
-    fn pack_test_container(source: &Path, container: &Path) {
+    fn pack_test_container(source: &Path, container: &Path, password: &str) {
         crate::pack::pack(
             source,
             container,
-            PASSWORD,
+            password,
             None,
             8192,
             1,
@@ -321,18 +307,20 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let source = temp.path().join("source");
         let container = temp.path().join("test.cfs");
+        let password = random_test_password();
         std::fs::create_dir(&source).unwrap();
         std::fs::create_dir(source.join("empty")).unwrap();
+        std::fs::write(source.join("empty.bin"), []).unwrap();
         let mut contents = vec![0x41; CHUNK_SIZE];
         contents.extend_from_slice(b"cross-chunk-tail");
         std::fs::write(source.join("boundary.bin"), &contents).unwrap();
-        pack_test_container(&source, &container);
+        pack_test_container(&source, &container, &password);
 
-        let filesystem = ReadOnlyV2Fs::new(&container, PASSWORD, 8).unwrap();
+        let filesystem = ReadOnlyV2Fs::new(&container, &password, 8).unwrap();
         let root = filesystem.metadata(1).unwrap();
         assert_eq!(root.kind, EntryKind::Directory);
         let children = filesystem.read_dir(root.id).unwrap();
-        assert_eq!(children.len(), 2);
+        assert_eq!(children.len(), 3);
         let file = filesystem.lookup(root.id, "boundary.bin").unwrap();
         let offset = CHUNK_SIZE as u64 - 4;
         let actual = filesystem.read(file.id, offset, 10).unwrap();
@@ -348,6 +336,54 @@ mod tests {
             filesystem.read(root.id, 0, 1).unwrap_err().kind(),
             FsErrorKind::IsDirectory
         );
+
+        let shared = Arc::new(ReadOnlyFs::open(&container, &password, 8).unwrap());
+        let names: Vec<_> = shared
+            .read_dir(1)
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect();
+        assert_eq!(names, vec!["boundary.bin", "empty", "empty.bin"]);
+        let empty = shared.lookup(1, "empty.bin").unwrap();
+        assert!(shared.read(empty.id, 0, 32).unwrap().is_empty());
+
+        let boundary = shared.lookup(1, "boundary.bin").unwrap();
+        let ranges = [
+            (0u64, 1u32),
+            (17, 4097),
+            (CHUNK_SIZE as u64 - 9, 31),
+            (CHUNK_SIZE as u64, 17),
+            (contents.len() as u64 - 1, 32),
+            (contents.len() as u64, 32),
+        ];
+        for (offset, length) in ranges {
+            let actual = shared.read(boundary.id, offset, length).unwrap();
+            let start = usize::try_from(offset).unwrap().min(contents.len());
+            let end = start.saturating_add(length as usize).min(contents.len());
+            assert_eq!(actual.as_slice(), &contents[start..end]);
+        }
+
+        let expected = Arc::new(contents);
+        let threads: Vec<_> = (0..8)
+            .map(|worker| {
+                let shared = Arc::clone(&shared);
+                let expected = Arc::clone(&expected);
+                std::thread::spawn(move || {
+                    for iteration in 0..16 {
+                        let offset =
+                            ((worker * 997 + iteration * 4093) as u64) % expected.len() as u64;
+                        let actual = shared.read(boundary.id, offset, 8192).unwrap();
+                        let start = offset as usize;
+                        let end = start.saturating_add(8192).min(expected.len());
+                        assert_eq!(actual.as_slice(), &expected[start..end]);
+                    }
+                })
+            })
+            .collect();
+        for thread in threads {
+            thread.join().unwrap();
+        }
     }
 
     #[test]
@@ -355,11 +391,12 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let source = temp.path().join("source");
         let container = temp.path().join("corrupt.cfs");
+        let password = random_test_password();
         std::fs::create_dir(&source).unwrap();
         std::fs::write(source.join("secret.txt"), b"secret data").unwrap();
-        pack_test_container(&source, &container);
+        pack_test_container(&source, &container, &password);
 
-        let filesystem = ReadOnlyV2Fs::new(&container, PASSWORD, 0).unwrap();
+        let filesystem = ReadOnlyV2Fs::new(&container, &password, 0).unwrap();
         let file = filesystem.lookup(1, "secret.txt").unwrap();
         let mut handle = std::fs::OpenOptions::new()
             .read(true)

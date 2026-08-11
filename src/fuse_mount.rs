@@ -43,7 +43,7 @@ impl Filesystem for CipherFS {
         ino: INodeNo,
         fh: FileHandle,
         offset: u64,
-        reply: ReplyDirectory,
+        mut reply: ReplyDirectory,
     ) {
         let _ = (req, fh);
         let node = match self.0.metadata(ino.into()) {

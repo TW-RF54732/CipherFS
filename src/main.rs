@@ -1,40 +1,16 @@
-mod crypto;
-mod extract;
-mod format;
-#[cfg(unix)]
-mod fuse_mount;
-mod index;
-mod layout;
-#[cfg(unix)]
-mod legacy_extract;
-mod pack;
-mod parallel;
-mod platform_io;
-mod platform_metadata;
-mod readonly_fs;
-mod readonly_v1;
-mod safe_fs;
-mod updater;
-mod v2;
-#[cfg(windows)]
-mod windows_names;
-#[cfg(windows)]
-mod winfsp_mount;
-
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use rand::Rng;
-use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use zeroize::Zeroizing;
 
-use crate::format::{Format, detect as detect_format};
+use cipherfs::format::require_v2;
 
 static RUNNING: AtomicBool = AtomicBool::new(true);
 
 #[derive(Parser)]
 #[command(name = "cipherfs")]
+#[command(version)]
 #[command(
     about = "CipherFS: experimental read-only encrypted filesystem for personal privacy",
     long_about = None
@@ -63,7 +39,7 @@ enum Commands {
         #[arg(long, default_value_t = 0, value_parser = parse_threads)]
         threads: usize,
     },
-    /// Extract a v1 or v2 container
+    /// Extract a v2 container into a destination that does not yet exist
     Extract {
         container: PathBuf,
         output: PathBuf,
@@ -71,7 +47,7 @@ enum Commands {
         #[arg(long, default_value_t = 0, value_parser = parse_threads)]
         threads: usize,
     },
-    /// Mount a v1 or v2 container read-only
+    /// Mount a v2 container read-only
     Mount {
         container: PathBuf,
         mountpoint: PathBuf,
@@ -107,9 +83,13 @@ fn parse_threads(value: &str) -> std::result::Result<usize, String> {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Update => updater::update_interactive(),
+        Commands::Update => cipherfs::updater::update_interactive(),
         Commands::Licenses => {
-            println!(include_str!("../THIRD_PARTY_NOTICES.md"));
+            println!("{}", include_str!("../THIRD_PARTY_NOTICES.md"));
+            println!("\n--- Locked Rust dependencies ---\n");
+            println!("{}", include_str!("../THIRD_PARTY_DEPENDENCIES.md"));
+            println!("\n--- GNU GPL version 3 ---\n");
+            println!("{}", include_str!("../LICENSE-GPL-3.0"));
             Ok(())
         }
         Commands::Pack {
@@ -144,7 +124,7 @@ fn main() -> Result<()> {
             let max_index_bytes = max_index
                 .checked_mul(1024 * 1024)
                 .context("Index limit overflow")?;
-            pack::pack(
+            cipherfs::pack::pack(
                 &source,
                 &output,
                 &password,
@@ -161,45 +141,21 @@ fn main() -> Result<()> {
             output,
             threads,
         } => {
+            require_v2(&container)?;
             let password = Zeroizing::new(rpassword::prompt_password("Enter Password: ")?);
-            match detect_format(&container)? {
-                Format::V2 => extract::extract_v2(&container, &output, &password, threads),
-                Format::V1 => {
-                    eprintln!(
-                        "[Warning] Legacy v1 has known design limitations; only open trusted containers."
-                    );
-                    check_legacy_duress_and_wipe(&container, &password)?;
-                    #[cfg(unix)]
-                    {
-                        legacy_extract::extract_legacy(&container, &output, &password)
-                    }
-                    #[cfg(windows)]
-                    {
-                        extract::extract_v1_windows(&container, &output, &password)
-                    }
-                }
-            }
+            cipherfs::extract::extract_v2(&container, &output, &password, threads)
         }
         Commands::Mount {
             container,
             mountpoint,
             cache_mib,
         } => {
+            require_v2(&container)?;
             let password = Zeroizing::new(rpassword::prompt_password("Enter Password: ")?);
-            if matches!(detect_format(&container)?, Format::V1) {
-                eprintln!(
-                    "[Warning] Legacy v1 has known design limitations; only open trusted containers."
-                );
-                check_legacy_duress_and_wipe(&container, &password)?;
-            }
             mount_filesystem(&container, &mountpoint, &password, cache_mib)
         }
         Commands::Passwd { container } => {
-            if !matches!(detect_format(&container)?, Format::V2) {
-                anyhow::bail!(
-                    "Legacy v1 containers are read-only; extract and re-pack to change the password"
-                );
-            }
+            require_v2(&container)?;
             let old = Zeroizing::new(rpassword::prompt_password("Enter Current Password: ")?);
             let new = Zeroizing::new(rpassword::prompt_password("Set New Master Password: ")?);
             let verify =
@@ -207,23 +163,17 @@ fn main() -> Result<()> {
             if new.as_str() != verify.as_str() {
                 anyhow::bail!("Passwords do not match");
             }
-            v2::change_password(&container, &old, &new)?;
+            cipherfs::v2::change_password(&container, &old, &new)?;
             println!("[Success] Password keyslot updated.");
             Ok(())
         }
         Commands::Verify { container, threads } => {
+            require_v2(&container)?;
             let password = Zeroizing::new(rpassword::prompt_password("Enter Password: ")?);
-            match detect_format(&container)? {
-                Format::V2 => {
-                    let opened = v2::open(&container, &password)?;
-                    parallel::install(threads, || v2::verify_all(&opened))?;
-                    println!("[Success] Header, index, and all encrypted chunks are valid.");
-                    Ok(())
-                }
-                Format::V1 => {
-                    anyhow::bail!("Full verify is only available for v2 containers")
-                }
-            }
+            let opened = cipherfs::v2::open(&container, &password)?;
+            cipherfs::parallel::install(threads, || cipherfs::v2::verify_all(&opened))?;
+            println!("[Success] Header, index, and all encrypted chunks are valid.");
+            Ok(())
         }
     }
 }
@@ -247,7 +197,7 @@ fn mount_filesystem(
     cache_mib: u64,
 ) -> Result<()> {
     use fuser::MountOption;
-    let filesystem = crate::fuse_mount::CipherFS::new(container, password, cache_mib)?;
+    let filesystem = cipherfs::fuse_mount::CipherFS::new(container, password, cache_mib)?;
     std::fs::create_dir_all(mountpoint).context("Unable to create mount point directory")?;
     let mut config = fuser::Config::default();
     config.mount_options = vec![MountOption::RO, MountOption::FSName("cipherfs".to_string())];
@@ -269,34 +219,5 @@ fn mount_filesystem(
     cache_mib: u64,
 ) -> Result<()> {
     install_signal_handler()?;
-    crate::winfsp_mount::mount(container, mountpoint, password, cache_mib, wait_for_unmount)
-}
-
-fn check_legacy_duress_and_wipe(container: &Path, password: &str) -> Result<()> {
-    use crate::crypto::hash_duress_password;
-    use crate::layout::{HEADER_SIZE, Header};
-    use std::fs::OpenOptions;
-
-    let mut file = OpenOptions::new().read(true).open(container)?;
-    let mut buffer = [0u8; HEADER_SIZE];
-    file.read_exact(&mut buffer)?;
-    let header: Header = rmp_serde::from_read(std::io::Cursor::new(buffer))?;
-    let input_hash = hash_duress_password(password);
-    if header.duress_hash == [0u8; 32] || header.duress_hash != input_hash {
-        return Ok(());
-    }
-
-    let mut file = OpenOptions::new().write(true).open(container)?;
-    let mut new_header = header;
-    rand::rng().fill_bytes(&mut new_header.encrypted_dek);
-    let encoded = rmp_serde::to_vec(&new_header)?;
-    if encoded.len() > HEADER_SIZE {
-        anyhow::bail!("Legacy header overflow during duress handling");
-    }
-    let mut padded = [0u8; HEADER_SIZE];
-    padded[..encoded.len()].copy_from_slice(&encoded);
-    file.seek(SeekFrom::Start(0))?;
-    file.write_all(&padded)?;
-    file.sync_all()?;
-    anyhow::bail!("Unable to unlock container (wrong password or damage)")
+    cipherfs::winfsp_mount::mount(container, mountpoint, password, cache_mib, wait_for_unmount)
 }
