@@ -4,11 +4,12 @@ use rand::Rng;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions};
-use std::os::unix::fs::FileExt;
-use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 use zeroize::{Zeroize, Zeroizing};
+
+use crate::platform_io::PlatformFileExt;
+use crate::platform_metadata::FileFingerprint;
 
 use crate::v2::{
     self, Argon2Params, CHUNK_SIZE, Entry, EntryKind, HEADER_SIZE, Header, Index, KeySlot, MAGIC,
@@ -18,10 +19,7 @@ use crate::v2::{
 #[derive(Clone)]
 struct SourceSnapshot {
     path: PathBuf,
-    size: u64,
-    inode: u64,
-    mtime: i64,
-    mtime_nsec: i64,
+    fingerprint: FileFingerprint,
 }
 
 type ScanResult = (Vec<Entry>, Vec<(u64, SourceSnapshot)>, u64, u64);
@@ -207,7 +205,7 @@ fn pack_inner(
 
     std::fs::rename(&temp_path, output_file)
         .with_context(|| format!("Unable to install {}", output_file.display()))?;
-    File::open(output_parent(output_file))?.sync_all()?;
+    sync_parent(output_parent(output_file))?;
     temp_guard.keep = true;
     println!("[Success] {} created and verified.", output_file.display());
     Ok(())
@@ -280,6 +278,8 @@ fn scan_source(source_dir: &Path) -> Result<ScanResult> {
             });
             path_ids.insert(relative.to_path_buf(), id);
         } else if metadata.is_file() {
+            let source_file = File::open(item.path())?;
+            let source_metadata = source_file.metadata()?;
             let mut file_id = [0u8; 16];
             loop {
                 rand::rng().fill_bytes(&mut file_id);
@@ -287,7 +287,7 @@ fn scan_source(source_dir: &Path) -> Result<ScanResult> {
                     break;
                 }
             }
-            let size = metadata.len();
+            let size = source_metadata.len();
             let (chunk_count, encrypted_size) = v2::encrypted_file_size(size)?;
             entries.push(Entry {
                 id,
@@ -305,10 +305,7 @@ fn scan_source(source_dir: &Path) -> Result<ScanResult> {
                 id,
                 SourceSnapshot {
                     path: item.path().to_path_buf(),
-                    size,
-                    inode: metadata.ino(),
-                    mtime: metadata.mtime(),
-                    mtime_nsec: metadata.mtime_nsec(),
+                    fingerprint: FileFingerprint::from_file(&source_file)?,
                 },
             ));
             total_plaintext = total_plaintext
@@ -338,7 +335,7 @@ fn encrypt_source_file(
 ) -> Result<()> {
     let file = File::open(&snapshot.path)
         .with_context(|| format!("Unable to open {}", snapshot.path.display()))?;
-    ensure_unchanged(snapshot, &file.metadata()?)?;
+    ensure_unchanged(snapshot, &file)?;
     let key = Zeroizing::new(v2::derive_file_key(
         dek,
         &header.container_id,
@@ -378,21 +375,29 @@ fn encrypt_source_file(
             progress.inc(expected as u64);
             Ok(())
         })?;
-    ensure_unchanged(snapshot, &file.metadata()?)?;
+    ensure_unchanged(snapshot, &file)?;
     Ok(())
 }
 
-fn ensure_unchanged(snapshot: &SourceSnapshot, metadata: &std::fs::Metadata) -> Result<()> {
-    if metadata.len() != snapshot.size
-        || metadata.ino() != snapshot.inode
-        || metadata.mtime() != snapshot.mtime
-        || metadata.mtime_nsec() != snapshot.mtime_nsec
-    {
+fn ensure_unchanged(snapshot: &SourceSnapshot, file: &File) -> Result<()> {
+    if FileFingerprint::from_file(file)? != snapshot.fingerprint {
         anyhow::bail!(
             "Source file changed while packing: {}",
             snapshot.path.display()
         );
     }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn sync_parent(path: &Path) -> Result<()> {
+    File::open(path)?.sync_all()?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn sync_parent(_path: &Path) -> Result<()> {
+    // Windows does not expose a stable-directory sync operation through std.
     Ok(())
 }
 
@@ -423,8 +428,8 @@ fn output_parent(output: &Path) -> &Path {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::platform_io::PlatformFileExt;
     use std::io::{Read, Seek, Write};
-    use std::os::unix::fs::FileExt;
 
     #[test]
     fn relative_output_without_directory_syncs_current_directory() {

@@ -17,10 +17,12 @@ pub enum Inode {
 }
 
 impl Inode {
+    #[cfg(unix)]
     pub fn is_file(&self) -> bool {
         matches!(self, Inode::File { .. })
     }
 
+    #[cfg(unix)]
     pub fn ino(&self) -> u64 {
         match self {
             Inode::File { ino, .. } => *ino,

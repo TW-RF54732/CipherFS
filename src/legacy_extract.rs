@@ -7,8 +7,9 @@ use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::fs::File;
 use std::io::Write;
-use std::os::unix::fs::FileExt;
 use std::path::Path;
+
+use crate::platform_io::PlatformFileExt;
 
 pub fn extract_legacy(container_path: &Path, output_dir: &Path, password: &str) -> Result<()> {
     println!("[Info] Opening container {}...", container_path.display());

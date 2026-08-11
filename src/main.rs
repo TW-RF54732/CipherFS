@@ -1,21 +1,28 @@
 mod crypto;
 mod extract;
 mod format;
+#[cfg(unix)]
 mod fuse_mount;
 mod index;
 mod layout;
+#[cfg(unix)]
 mod legacy_extract;
-mod legacy_mount;
 mod pack;
 mod parallel;
+mod platform_io;
+mod platform_metadata;
 mod readonly_fs;
+mod readonly_v1;
 mod safe_fs;
 mod updater;
 mod v2;
+#[cfg(windows)]
+mod windows_names;
+#[cfg(windows)]
+mod winfsp_mount;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use fuser::MountOption;
 use rand::Rng;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -23,7 +30,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use zeroize::Zeroizing;
 
 use crate::format::{Format, detect as detect_format};
-use crate::fuse_mount::CipherFS;
 
 static RUNNING: AtomicBool = AtomicBool::new(true);
 
@@ -84,6 +90,8 @@ enum Commands {
     },
     /// Install the latest release only after Minisign verification
     Update,
+    /// Show CipherFS and third-party licensing notices
+    Licenses,
 }
 
 fn parse_threads(value: &str) -> std::result::Result<usize, String> {
@@ -100,6 +108,10 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Update => updater::update_interactive(),
+        Commands::Licenses => {
+            println!(include_str!("../THIRD_PARTY_NOTICES.md"));
+            Ok(())
+        }
         Commands::Pack {
             source,
             output,
@@ -157,7 +169,14 @@ fn main() -> Result<()> {
                         "[Warning] Legacy v1 has known design limitations; only open trusted containers."
                     );
                     check_legacy_duress_and_wipe(&container, &password)?;
-                    legacy_extract::extract_legacy(&container, &output, &password)
+                    #[cfg(unix)]
+                    {
+                        legacy_extract::extract_legacy(&container, &output, &password)
+                    }
+                    #[cfg(windows)]
+                    {
+                        extract::extract_v1_windows(&container, &output, &password)
+                    }
                 }
             }
         }
@@ -168,33 +187,12 @@ fn main() -> Result<()> {
         } => {
             let password = Zeroizing::new(rpassword::prompt_password("Enter Password: ")?);
             if matches!(detect_format(&container)?, Format::V1) {
+                eprintln!(
+                    "[Warning] Legacy v1 has known design limitations; only open trusted containers."
+                );
                 check_legacy_duress_and_wipe(&container, &password)?;
             }
-            let filesystem = CipherFS::new(&container, &password, cache_mib)?;
-            std::fs::create_dir_all(&mountpoint)
-                .context("Unable to create mount point directory")?;
-            let mut config = fuser::Config::default();
-            config.mount_options =
-                vec![MountOption::RO, MountOption::FSName("cipherfs".to_string())];
-            let _session = fuser::spawn_mount2(filesystem, &mountpoint, &config)
-                .context("FUSE mount failed")?;
-            println!("[Success] CipherFS is mounted read-only.");
-            println!("[Info] Press Ctrl+C to unmount.");
-            unsafe {
-                libc::signal(
-                    libc::SIGINT,
-                    handle_signal as *const () as libc::sighandler_t,
-                );
-                libc::signal(
-                    libc::SIGTERM,
-                    handle_signal as *const () as libc::sighandler_t,
-                );
-            }
-            while RUNNING.load(Ordering::SeqCst) {
-                std::thread::sleep(std::time::Duration::from_millis(100));
-            }
-            println!("\n[Info] Unmounting...");
-            Ok(())
+            mount_filesystem(&container, &mountpoint, &password, cache_mib)
         }
         Commands::Passwd { container } => {
             if !matches!(detect_format(&container)?, Format::V2) {
@@ -230,8 +228,48 @@ fn main() -> Result<()> {
     }
 }
 
-extern "C" fn handle_signal(_: libc::c_int) {
-    RUNNING.store(false, Ordering::SeqCst);
+fn install_signal_handler() -> Result<()> {
+    ctrlc::set_handler(|| RUNNING.store(false, Ordering::SeqCst))
+        .context("Unable to install Ctrl+C handler")
+}
+
+fn wait_for_unmount() {
+    while RUNNING.load(Ordering::SeqCst) {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+#[cfg(unix)]
+fn mount_filesystem(
+    container: &Path,
+    mountpoint: &Path,
+    password: &str,
+    cache_mib: u64,
+) -> Result<()> {
+    use fuser::MountOption;
+    let filesystem = crate::fuse_mount::CipherFS::new(container, password, cache_mib)?;
+    std::fs::create_dir_all(mountpoint).context("Unable to create mount point directory")?;
+    let mut config = fuser::Config::default();
+    config.mount_options = vec![MountOption::RO, MountOption::FSName("cipherfs".to_string())];
+    let _session =
+        fuser::spawn_mount2(filesystem, mountpoint, &config).context("FUSE mount failed")?;
+    install_signal_handler()?;
+    println!("[Success] CipherFS is mounted read-only.");
+    println!("[Info] Press Ctrl+C to unmount.");
+    wait_for_unmount();
+    println!("\n[Info] Unmounting...");
+    Ok(())
+}
+
+#[cfg(windows)]
+fn mount_filesystem(
+    container: &Path,
+    mountpoint: &Path,
+    password: &str,
+    cache_mib: u64,
+) -> Result<()> {
+    install_signal_handler()?;
+    crate::winfsp_mount::mount(container, mountpoint, password, cache_mib, wait_for_unmount)
 }
 
 fn check_legacy_duress_and_wipe(container: &Path, password: &str) -> Result<()> {

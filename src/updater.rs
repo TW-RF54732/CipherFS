@@ -6,15 +6,27 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
-use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::time::Duration;
 
 const OWNER: &str = "TW-RF54732";
 const REPOSITORY: &str = "CipherFS";
+#[cfg(unix)]
 const MANIFEST_ASSET: &str = "cipherfs-linux-amd64.manifest";
+#[cfg(windows)]
+const MANIFEST_ASSET: &str = "cipherfs-windows-amd64.manifest";
+#[cfg(unix)]
 const SIGNATURE_ASSET: &str = "cipherfs-linux-amd64.manifest.minisig";
+#[cfg(windows)]
+const SIGNATURE_ASSET: &str = "cipherfs-windows-amd64.manifest.minisig";
+#[cfg(unix)]
 const TARGET: &str = "x86_64-unknown-linux-musl";
+#[cfg(windows)]
+const TARGET: &str = "x86_64-pc-windows-msvc";
+#[cfg(unix)]
+const BINARY_ASSET: &str = "cipherfs";
+#[cfg(windows)]
+const BINARY_ASSET: &str = "cipherfs.exe";
 
 #[derive(Deserialize)]
 struct GithubRelease {
@@ -82,7 +94,7 @@ pub fn update_interactive() -> Result<()> {
     let manifest_text =
         std::str::from_utf8(&manifest_bytes).context("Update manifest is not UTF-8")?;
     let manifest = parse_manifest(manifest_text)?;
-    if manifest.version != latest || manifest.target != TARGET || manifest.asset != "cipherfs" {
+    if manifest.version != latest || manifest.target != TARGET || manifest.asset != BINARY_ASSET {
         anyhow::bail!("Signed update manifest does not match this release/target");
     }
 
@@ -121,7 +133,11 @@ pub fn update_interactive() -> Result<()> {
         .context("Current executable has no parent directory")?;
     let mut random = [0u8; 8];
     rand::Rng::fill_bytes(&mut rand::rng(), &mut random);
-    let temp_path = parent.join(format!(".cipherfs-update-{}", hex::encode(random)));
+    let temp_path = parent.join(format!(
+        ".cipherfs-update-{}{}",
+        hex::encode(random),
+        std::env::consts::EXE_SUFFIX
+    ));
     let temp = TempDownload(temp_path.clone());
     let mut file = OpenOptions::new()
         .write(true)
@@ -130,12 +146,35 @@ pub fn update_interactive() -> Result<()> {
     file.write_all(&binary)?;
     file.sync_all()?;
     drop(file);
-    std::fs::set_permissions(&temp_path, std::fs::Permissions::from_mode(0o755))?;
+    set_executable(&temp_path)?;
     std::fs::File::open(&temp_path)?.sync_all()?;
     self_replace::self_replace(&temp_path)?;
-    std::fs::File::open(parent)?.sync_all()?;
+    sync_parent(parent)?;
     drop(temp);
     println!("[Success] Updated to {latest}.");
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_executable(path: &std::path::Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn set_executable(_path: &std::path::Path) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn sync_parent(path: &std::path::Path) -> Result<()> {
+    std::fs::File::open(path)?.sync_all()?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn sync_parent(_path: &std::path::Path) -> Result<()> {
     Ok(())
 }
 

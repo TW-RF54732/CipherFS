@@ -8,6 +8,21 @@ use zeroize::Zeroizing;
 
 use crate::v2::{self, CHUNK_SIZE, Entry, EntryKind, OpenedContainer};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeKind {
+    File,
+    Directory,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Node {
+    pub id: u64,
+    pub parent_id: u64,
+    pub name: String,
+    pub kind: NodeKind,
+    pub size: u64,
+}
+
 type CacheKey = ([u8; 16], u64);
 type CachedChunk = Arc<Zeroizing<Vec<u8>>>;
 
@@ -26,11 +41,11 @@ pub struct FsError {
 }
 
 impl FsError {
-    fn semantic(kind: FsErrorKind) -> Self {
+    pub(crate) fn semantic(kind: FsErrorKind) -> Self {
         Self { kind, source: None }
     }
 
-    fn integrity(error: impl Into<Error>) -> Self {
+    pub(crate) fn integrity(error: impl Into<Error>) -> Self {
         Self {
             kind: FsErrorKind::Integrity,
             source: Some(error.into()),
@@ -39,6 +54,71 @@ impl FsError {
 
     pub fn kind(&self) -> FsErrorKind {
         self.kind
+    }
+}
+
+impl From<&Entry> for Node {
+    fn from(entry: &Entry) -> Self {
+        Self {
+            id: entry.id,
+            parent_id: entry.parent_id,
+            name: entry.name.clone(),
+            kind: if entry.kind == EntryKind::File {
+                NodeKind::File
+            } else {
+                NodeKind::Directory
+            },
+            size: entry.size,
+        }
+    }
+}
+
+pub enum ReadOnlyFs {
+    V1(Box<crate::readonly_v1::ReadOnlyV1Fs>),
+    V2(Box<ReadOnlyV2Fs>),
+}
+
+impl ReadOnlyFs {
+    pub fn open(path: &Path, password: &str, cache_mib: u64) -> anyhow::Result<Self> {
+        match crate::format::detect(path)? {
+            crate::format::Format::V1 => Ok(Self::V1(Box::new(
+                crate::readonly_v1::ReadOnlyV1Fs::new(path, password)?,
+            ))),
+            crate::format::Format::V2 => Ok(Self::V2(Box::new(ReadOnlyV2Fs::new(
+                path, password, cache_mib,
+            )?))),
+        }
+    }
+
+    pub fn metadata(&self, id: u64) -> Result<Node, FsError> {
+        match self {
+            Self::V1(fs) => fs.metadata(id),
+            Self::V2(fs) => fs.metadata(id).map(Node::from),
+        }
+    }
+
+    #[cfg_attr(windows, allow(dead_code))]
+    pub fn lookup(&self, parent: u64, name: &str) -> Result<Node, FsError> {
+        match self {
+            Self::V1(fs) => fs.lookup(parent, name),
+            Self::V2(fs) => fs.lookup(parent, name).map(Node::from),
+        }
+    }
+
+    pub fn read_dir(&self, id: u64) -> Result<Vec<Node>, FsError> {
+        let mut entries = match self {
+            Self::V1(fs) => fs.read_dir(id)?,
+            Self::V2(fs) => fs.read_dir(id)?.into_iter().map(Node::from).collect(),
+        };
+        entries.sort_by(|left, right| left.name.cmp(&right.name).then(left.id.cmp(&right.id)));
+        Ok(entries)
+    }
+
+    pub fn read(&self, id: u64, offset: u64, size: u32) -> Result<Zeroizing<Vec<u8>>, FsError> {
+        match self {
+            Self::V1(fs) => fs.read(id, offset, size),
+            Self::V2(fs) => fs.read(id, offset, size),
+        }
     }
 }
 
@@ -104,6 +184,7 @@ impl ReadOnlyV2Fs {
             .ok_or_else(|| FsError::semantic(FsErrorKind::NotFound))
     }
 
+    #[cfg_attr(windows, allow(dead_code))]
     pub fn lookup(&self, parent: u64, name: &str) -> Result<&Entry, FsError> {
         self.opened
             .index

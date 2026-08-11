@@ -14,9 +14,10 @@ use sha2::Sha256;
 use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions};
 use std::io::{Cursor, Seek, SeekFrom, Write};
-use std::os::unix::fs::FileExt;
 use std::path::Path;
 use zeroize::{Zeroize, Zeroizing};
+
+use crate::platform_io::PlatformFileExt;
 
 pub const MAGIC: [u8; 4] = [0x43, 0x46, 0x53, 0x02];
 pub const VERSION: u16 = 2;

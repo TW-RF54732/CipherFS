@@ -1,23 +1,24 @@
 use anyhow::{Context, Result};
+use cap_std::ambient_authority;
+use cap_std::fs::{Dir, File, OpenOptions};
 use rand::Rng;
 use std::collections::HashMap;
-use std::ffi::CString;
-use std::fs::{self, File};
+use std::ffi::OsString;
+use std::fs;
 use std::io::Write;
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::path::Path;
 
+#[cfg(unix)]
 use crate::v2::validate_name;
 
 pub struct SafeRoot {
-    root: OwnedFd,
-    directories: HashMap<u64, OwnedFd>,
+    directories: HashMap<u64, Dir>,
 }
 
 pub struct PendingFile {
-    parent_fd: RawFd,
-    temp_name: CString,
-    final_name: CString,
+    parent: Dir,
+    temp_name: OsString,
+    final_name: OsString,
     file: Option<File>,
     committed: bool,
 }
@@ -25,57 +26,43 @@ pub struct PendingFile {
 impl SafeRoot {
     pub fn open(path: &Path) -> Result<Self> {
         fs::create_dir_all(path)?;
-        let c_path = cstring_path(path)?;
-        let fd = unsafe {
-            libc::open(
-                c_path.as_ptr(),
-                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
-            )
-        };
-        if fd < 0 {
-            return Err(std::io::Error::last_os_error())
-                .with_context(|| format!("Unable to open output root {}", path.display()));
-        }
-        let root = unsafe { OwnedFd::from_raw_fd(fd) };
-        Ok(Self {
-            root,
-            directories: HashMap::new(),
-        })
+        reject_link_or_reparse(path)?;
+        let root = Dir::open_ambient_dir(path, ambient_authority())
+            .with_context(|| format!("Unable to open output root {}", path.display()))?;
+        let mut directories = HashMap::new();
+        directories.insert(1, root);
+        Ok(Self { directories })
     }
 
     pub fn install_root_id(&mut self, id: u64) -> Result<()> {
-        let fd = dup_fd(self.root.as_raw_fd())?;
-        self.directories.insert(id, fd);
+        let root = self
+            .directories
+            .get(&1)
+            .context("Output root is not open")?
+            .try_clone()?;
+        self.directories.insert(id, root);
         Ok(())
     }
 
     pub fn create_directory(&mut self, id: u64, parent_id: u64, name: &str) -> Result<()> {
-        validate_name(name)?;
+        validate_output_name(name)?;
         let parent = self
             .directories
             .get(&parent_id)
             .context("Parent directory has not been created")?;
-        let name = CString::new(name.as_bytes()).context("Filename contains NUL")?;
-        let result = unsafe { libc::mkdirat(parent.as_raw_fd(), name.as_ptr(), 0o700) };
-        if result < 0 {
-            let error = std::io::Error::last_os_error();
-            if error.raw_os_error() != Some(libc::EEXIST) {
-                return Err(error).context("Unable to create output directory");
-            }
+        match parent.create_dir(name) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error).context("Unable to create output directory"),
         }
-        let fd = unsafe {
-            libc::openat(
-                parent.as_raw_fd(),
-                name.as_ptr(),
-                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-            )
-        };
-        if fd < 0 {
-            return Err(std::io::Error::last_os_error())
-                .context("Output directory is not a safe real directory");
+        let metadata = parent.symlink_metadata(name)?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            anyhow::bail!("Output directory is not a safe real directory");
         }
-        self.directories
-            .insert(id, unsafe { OwnedFd::from_raw_fd(fd) });
+        let child = parent
+            .open_dir(name)
+            .context("Unable to open output directory without escaping output root")?;
+        self.directories.insert(id, child);
         Ok(())
     }
 
@@ -85,33 +72,27 @@ impl SafeRoot {
         final_name: &str,
         entry_id: u64,
     ) -> Result<PendingFile> {
-        validate_name(final_name)?;
+        validate_output_name(final_name)?;
         let parent = self
             .directories
             .get(&parent_id)
             .context("Parent directory has not been created")?;
-        let final_name = CString::new(final_name.as_bytes()).context("Filename contains NUL")?;
+        if parent.symlink_metadata(final_name).is_ok() {
+            anyhow::bail!("Refusing to overwrite existing output entry {final_name}");
+        }
         let mut random = [0u8; 8];
         rand::rng().fill_bytes(&mut random);
-        let temp = format!(".cipherfs-{entry_id}-{}.tmp", hex::encode(random));
-        let temp_name = CString::new(temp).expect("generated temporary name contains no NUL");
-        let fd = unsafe {
-            libc::openat(
-                parent.as_raw_fd(),
-                temp_name.as_ptr(),
-                libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-                0o600,
-            )
-        };
-        if fd < 0 {
-            return Err(std::io::Error::last_os_error())
-                .context("Unable to create temporary output file");
-        }
+        let temp_name = OsString::from(format!(".cipherfs-{entry_id}-{}.tmp", hex::encode(random)));
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        let file = parent
+            .open_with(&temp_name, &options)
+            .context("Unable to create temporary output file")?;
         Ok(PendingFile {
-            parent_fd: parent.as_raw_fd(),
+            parent: parent.try_clone()?,
             temp_name,
-            final_name,
-            file: Some(unsafe { File::from_raw_fd(fd) }),
+            final_name: OsString::from(final_name),
+            file: Some(file),
             committed: false,
         })
     }
@@ -128,25 +109,15 @@ impl PendingFile {
         if let Some(mut file) = self.file.take() {
             file.flush()?;
             file.sync_all()?;
-            drop(file);
         }
         Ok(())
     }
 
     pub fn commit(mut self) -> Result<()> {
         self.finish_writing()?;
-        let result = unsafe {
-            libc::renameat(
-                self.parent_fd,
-                self.temp_name.as_ptr(),
-                self.parent_fd,
-                self.final_name.as_ptr(),
-            )
-        };
-        if result < 0 {
-            return Err(std::io::Error::last_os_error())
-                .context("Unable to atomically install extracted file");
-        }
+        self.parent
+            .rename(&self.temp_name, &self.parent, &self.final_name)
+            .context("Unable to atomically install extracted file")?;
         self.committed = true;
         Ok(())
     }
@@ -156,33 +127,48 @@ impl Drop for PendingFile {
     fn drop(&mut self) {
         if !self.committed {
             self.file.take();
-            unsafe {
-                libc::unlinkat(self.parent_fd, self.temp_name.as_ptr(), 0);
-            }
+            let _ = self.parent.remove_file(&self.temp_name);
         }
     }
 }
 
-fn dup_fd(fd: RawFd) -> Result<OwnedFd> {
-    let new_fd = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 0) };
-    if new_fd < 0 {
-        return Err(std::io::Error::last_os_error()).context("Unable to duplicate directory fd");
+fn reject_link_or_reparse(path: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() {
+        anyhow::bail!("Output root cannot be a symbolic link");
     }
-    Ok(unsafe { OwnedFd::from_raw_fd(new_fd) })
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            anyhow::bail!("Output root cannot be a Windows reparse point");
+        }
+    }
+    Ok(())
 }
 
-fn cstring_path(path: &Path) -> Result<CString> {
-    use std::os::unix::ffi::OsStrExt;
-    CString::new(path.as_os_str().as_bytes()).context("Path contains NUL")
+#[cfg(unix)]
+fn validate_output_name(name: &str) -> Result<()> {
+    validate_name(name)
+}
+
+#[cfg(windows)]
+fn validate_output_name(name: &str) -> Result<()> {
+    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\']) {
+        anyhow::bail!("Invalid Windows output name");
+    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::symlink;
 
+    #[cfg(unix)]
     #[test]
     fn refuses_existing_symlink_directory() {
+        use std::os::unix::fs::symlink;
         let temp = tempfile::tempdir().unwrap();
         let root_path = temp.path().join("root");
         let outside = temp.path().join("outside");
@@ -190,7 +176,14 @@ mod tests {
         fs::create_dir_all(&outside).unwrap();
         symlink(&outside, root_path.join("linked")).unwrap();
         let mut root = SafeRoot::open(&root_path).unwrap();
-        root.install_root_id(1).unwrap();
         assert!(root.create_directory(2, 1, "linked").is_err());
+    }
+
+    #[test]
+    fn refuses_to_overwrite_existing_file() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(temp.path().join("exists.txt"), b"existing").unwrap();
+        let root = SafeRoot::open(temp.path()).unwrap();
+        assert!(root.begin_file(1, "exists.txt", 2).is_err());
     }
 }

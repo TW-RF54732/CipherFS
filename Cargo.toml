@@ -1,7 +1,8 @@
 [package]
 name = "cipherfs"
-version = "2.1.0-beta.2"
+version = "2.2.0-beta.1"
 edition = "2024"
+license = "MIT"
 
 [dependencies]
 anyhow = "1.0.102"
@@ -9,11 +10,9 @@ argon2 = "0.5.3"
 blake3 = "1.8.5"
 chacha20poly1305 = "0.10.1"
 clap = { version = "4.6.1", features = ["derive"] }
-fuser = { version = "0.17.0", default-features = false }
 hkdf = "0.12.4"
 hex = "0.4.3"
 indicatif = "0.18.4"
-libc = "0.2.186"
 minisign-verify = "0.2.5"
 parking_lot = "0.12.5"
 rand = "0.10.1"
@@ -28,6 +27,31 @@ sha2 = "0.10.9"
 self-replace = "1.5.0"
 walkdir = "2.5.0"
 zeroize = { version = "1.8.2", features = ["derive"] }
+cap-std = "4.0.2"
+ctrlc = "3.5.1"
+
+[target.'cfg(unix)'.dependencies]
+fuser = { version = "0.17.0", default-features = false }
+libc = "0.2.186"
+
+[target.'cfg(windows)'.dependencies]
+winfsp = "0.13.0"
+winfsp-sys = "0.12.1"
+windows = { version = "0.61.3", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Registry",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+] }
+
+[target.'cfg(windows)'.build-dependencies]
+winfsp = "0.13.0"
+
+[patch.crates-io]
+winfsp-sys = { path = "vendor/winfsp-sys" }
 
 [dev-dependencies]
 tempfile = "3.27.0"

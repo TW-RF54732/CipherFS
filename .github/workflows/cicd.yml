@@ -144,9 +144,55 @@ jobs:
           path: target/x86_64-unknown-linux-musl/release/cipherfs
           if-no-files-found: error
 
+  windows-test:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install pinned WinFsp runtime and development files
+        shell: pwsh
+        run: |
+          $url = 'https://github.com/winfsp/winfsp/releases/download/v2.1/winfsp-2.1.25156.msi'
+          Invoke-WebRequest -Uri $url -OutFile winfsp.msi
+          $actual = (Get-FileHash winfsp.msi -Algorithm SHA256).Hash
+          if ($actual -ne '073A70E00F77423E34BED98B86E600DEF93393BA5822204FAC57A29324DB9F7A') {
+            throw "WinFsp MSI hash mismatch: $actual"
+          }
+          $process = Start-Process msiexec.exe -Wait -PassThru -ArgumentList '/i', (Resolve-Path winfsp.msi), '/qn', '/norestart', 'ADDLOCAL=ALL'
+          if ($process.ExitCode -notin 0, 3010) { throw "WinFsp install failed: $($process.ExitCode)" }
+
+      - name: Cache Cargo
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+
+      - name: Static checks, unit tests, and WinFsp runtime E2E
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --all-targets --target x86_64-pc-windows-msvc -- -D warnings
+          $env:CIPHERFS_WINFSP_E2E = '1'
+          $env:CIPHERFS_WINFSP_FOLDER_E2E = '1'
+          cargo test --locked --target x86_64-pc-windows-msvc -- --test-threads=1
+
+      - name: Build Windows release
+        run: cargo build --locked --release --target x86_64-pc-windows-msvc
+
+      - name: Upload tested Windows binary
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cipherfs-windows-amd64
+          path: target/x86_64-pc-windows-msvc/release/cipherfs.exe
+          if-no-files-found: error
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: test
+    needs: [test, windows-test]
     runs-on: ubuntu-latest
     environment: release
     permissions:
@@ -160,6 +206,12 @@ jobs:
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: cipherfs-linux-amd64
+          path: release
+
+      - name: Download tested Windows binary
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: cipherfs-windows-amd64
           path: release
 
       - name: Verify tag matches Cargo version
@@ -182,11 +234,18 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           printf 'version=%s\ntarget=x86_64-unknown-linux-musl\nasset=cipherfs\nsize=%s\nsha256=%s\n' \
             "${version}" "${size}" "${digest}" > release/cipherfs-linux-amd64.manifest
+          windows_size="$(stat -c '%s' release/cipherfs.exe)"
+          windows_digest="$(sha256sum release/cipherfs.exe | cut -d' ' -f1)"
+          printf 'version=%s\ntarget=x86_64-pc-windows-msvc\nasset=cipherfs.exe\nsize=%s\nsha256=%s\n' \
+            "${version}" "${windows_size}" "${windows_digest}" > release/cipherfs-windows-amd64.manifest
           printf '%s' "${MINISIGN_SECRET_KEY}" > release/minisign.key
           chmod 600 release/minisign.key
           minisign -S -W -s release/minisign.key -m release/cipherfs-linux-amd64.manifest
+          minisign -S -W -s release/minisign.key -m release/cipherfs-windows-amd64.manifest
           rm -f release/minisign.key
-          tar -C release -czf release/cipherfs-linux-amd64.tar.gz cipherfs
+          cp LICENSE THIRD_PARTY_NOTICES.md release/
+          tar -C release -czf release/cipherfs-linux-amd64.tar.gz cipherfs LICENSE THIRD_PARTY_NOTICES.md
+          (cd release && zip cipherfs-windows-amd64.zip cipherfs.exe LICENSE THIRD_PARTY_NOTICES.md)
 
       - name: Attest release artifacts
         uses: actions/attest@36051bcae73b7c2a8a6945a48cbf80953c6baa35 # v4
@@ -195,6 +254,13 @@ jobs:
             release/cipherfs
             release/cipherfs-linux-amd64.tar.gz
             release/cipherfs-linux-amd64.manifest
+            release/cipherfs.exe
+            release/cipherfs-windows-amd64.zip
+            release/cipherfs-windows-amd64.manifest
+            release/cipherfs-linux-amd64.manifest.minisig
+            release/cipherfs-windows-amd64.manifest.minisig
+            release/LICENSE
+            release/THIRD_PARTY_NOTICES.md
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
@@ -206,3 +272,9 @@ jobs:
             release/cipherfs-linux-amd64.tar.gz
             release/cipherfs-linux-amd64.manifest
             release/cipherfs-linux-amd64.manifest.minisig
+            release/cipherfs.exe
+            release/cipherfs-windows-amd64.zip
+            release/cipherfs-windows-amd64.manifest
+            release/cipherfs-windows-amd64.manifest.minisig
+            release/LICENSE
+            release/THIRD_PARTY_NOTICES.md

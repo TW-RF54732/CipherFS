@@ -1,12 +1,12 @@
 # CipherFS
 
 CipherFS is an experimental side project that explores a read-only encrypted
-virtual filesystem for Linux. It is a hobby project and a playground for trying
+virtual filesystem for Linux and Windows. It is a hobby project and a playground for trying
 out filesystem and encryption-related ideas - not a production security product.
 
-**Rust 2024** · **Linux / FUSE 3** · **Argon2id** · **ChaCha20-Poly1305** ·
-**HKDF** · **Authenticated Random Access** · **Versioned Binary Format** ·
-**Safe File I/O** · **GitHub Actions**
+**Rust 2024** · **Linux / FUSE 3** · **Windows / WinFsp** · **Argon2id** ·
+**ChaCha20-Poly1305** · **HKDF** · **Authenticated Random Access** ·
+**Versioned Binary Format** · **Capability-style Safe I/O** · **GitHub Actions**
 
 ## Architecture at a Glance
 
@@ -32,8 +32,10 @@ flowchart LR
 
     subgraph ACCESS["Verified access paths"]
         OPEN["Format and bounds validation<br/>AEAD authentication"]
-        FUSE["Read-only FUSE mount<br/>random access + LRU cache"]
-        EXTRACT["Safe extraction<br/>openat + no symlink traversal"]
+        CORE["Platform-neutral read-only core<br/>v1 + v2 random access"]
+        FUSE["Linux FUSE adapter"]
+        WINFSP["Windows WinFsp adapter"]
+        EXTRACT["Safe extraction<br/>capability root + no link traversal"]
         VERIFY["Full-container verification"]
     end
 
@@ -47,18 +49,20 @@ flowchart LR
     INDEX --> CONTAINER
     CHUNKS --> CONTAINER
     CONTAINER --> OPEN
-    OPEN --> FUSE
+    OPEN --> CORE
+    CORE --> FUSE
+    CORE --> WINFSP
     OPEN --> EXTRACT
     OPEN --> VERIFY
 ```
 
 | Engineering area | What this project demonstrates |
 | --- | --- |
-| Systems programming | Linux FUSE callbacks, inode-based traversal, range reads, bounded chunk cache |
+| Systems programming | Shared read-only core, Linux FUSE and Windows WinFsp adapters, range reads, bounded chunk cache |
 | Applied cryptography | Password KDF, key hierarchy, domain-separated keys, AEAD-bound metadata and chunks |
 | Storage design | Versioned container format, encrypted index, random-access chunk layout, v1 compatibility |
 | Defensive I/O | Overflow and resource limits, atomic pack/replace, source-change detection, safe extraction |
-| Verification and delivery | Tamper/replay/truncation tests, Linux E2E workflow, signed self-update releases |
+| Verification and delivery | Tamper/replay/truncation tests, Linux FUSE and Windows WinFsp E2E jobs, signed self-update releases |
 
 > [!WARNING]
 > CipherFS has not received a professional security audit or extensive
@@ -95,7 +99,7 @@ interpreted as proof that the overall system is secure.
 ### Read-only Filesystem Access
 
 - Packs a directory into an encrypted container.
-- Mounts a container as a read-only FUSE filesystem on Linux.
+- Mounts a container read-only through FUSE on Linux or WinFsp on Windows.
 - Extracts files from a container without mounting it.
 - Includes a self-update command for GitHub releases.
 
@@ -120,9 +124,11 @@ snapshots, SSD remapping, and previously recovered keys can defeat it.
 
 ## Installation
 
-CipherFS currently targets Linux and requires FUSE 3. Install `fuse3` and the
-FUSE 3 package provided by your distribution. Building from source may also
-require your distribution's FUSE development package.
+On Linux, install FUSE 3 and its development package. On Windows, install the
+official [WinFsp 2.1 runtime](https://winfsp.dev/rel/). The portable CipherFS
+download does not install or rebrand the WinFsp driver. The repository pins
+`winfsp-rs` 0.13 and vendors its generated WinFsp 2.1 bindings so a source build
+does not require libclang.
 
 ### Download a Release
 
@@ -162,6 +168,14 @@ worker count when sharing the machine with other workloads.
 ```
 
 The filesystem is mounted read-only. Press **Ctrl+C** to unmount.
+
+On Windows, `<mount_point>` may be a drive such as `X:`, an empty directory, or
+the literal `auto` to select the next free drive letter. Containers with names
+that Windows cannot represent are exposed through deterministic `~cfs-<id>`
+names and reported as warnings; the encrypted container is not modified.
+
+Run `cipherfs licenses` to view the bundled third-party attribution and
+no-warranty notice.
 
 ### Extract a Container
 
@@ -217,10 +231,12 @@ key intentionally disable automatic replacement.
 
 ## Platform Support
 
-- Linux
-- FUSE 3
+- Linux x86-64 with FUSE 3
+- Windows x86-64 with the separately installed WinFsp 2.1 runtime
 
-Other platforms are not currently supported.
+Windows releases are portable and may trigger SmartScreen because CipherFS does
+not currently have an Authenticode certificate. Release manifests remain
+Minisign-signed and include SHA-256 hashes.
 
 ## Security Boundaries
 
@@ -234,9 +250,10 @@ See [SECURITY.md](SECURITY.md) for the threat model and reporting guidance, and
 
 ## License and Disclaimer
 
-CipherFS is made available under the MIT License. As stated by that license, the
-software is provided **"as is"**, without warranty of any kind. You are
-responsible for deciding whether it is appropriate for your use and for any
-consequences of using it.
+CipherFS-authored source is available under the [MIT License](LICENSE). The
+Windows executable incorporates the GPLv3 `winfsp-rs` binding and is distributed
+subject to GPLv3 for the combined binary. Run `cipherfs licenses` or see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the complete distinction
+and WinFsp attribution.
 
 This README is a practical project warning, not legal or security advice.

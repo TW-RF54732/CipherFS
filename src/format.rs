@@ -1,8 +1,9 @@
 use anyhow::{Context, Result};
 use std::fs::File;
 use std::io::Cursor;
-use std::os::unix::fs::FileExt;
 use std::path::Path;
+
+use crate::platform_io::PlatformFileExt;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Format {
