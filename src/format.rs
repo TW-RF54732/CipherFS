@@ -11,7 +11,7 @@ pub enum Format {
     V2,
 }
 
-pub const V1_MIGRATION_MESSAGE: &str = "CipherFS v1 is not supported by v2.2.0. Use v2.2.0-beta.1 or earlier to extract a trusted v1 container, then pack the extracted directory as v2. See README.md#legacy-v1-migration";
+pub const V1_MIGRATION_MESSAGE: &str = "CipherFS v1 is not supported by v3.0.0. Use v2.2.0-beta.1 or earlier to extract a trusted v1 container, then pack the extracted directory as v2. See README.md#legacy-v1-migration";
 
 pub fn require_v2(path: &Path) -> Result<()> {
     match detect(path)? {

@@ -75,7 +75,7 @@ flowchart LR
 ## Project Status
 
 - Experimental and developed as a side project.
-- v2.2.0 is the first release with supported Linux and Windows release gates;
+- v3.0.0 is the first release with supported Linux and Windows release gates;
   the project status remains experimental rather than security-audited.
 - Testing covers v2 pack, verify, atomic extract, FUSE and WinFsp read-only
   mounts, corruption failure, and signed release metadata. This does not
@@ -119,15 +119,18 @@ snapshots, SSD remapping, and previously recovered keys can defeat it.
 ## Container Compatibility
 
 - New containers are always written in the CipherFS v2 format.
-- CipherFS v2.2.0 supports only v2 containers. Every command rejects v1 before
+- CipherFS v3.0.0 supports only v2 containers. Every command rejects v1 before
   prompting for a password or allocating container-controlled resources.
 - Existing v2 containers remain compatible; the v2 on-disk format is unchanged.
+- Dropping the v1 reader is an intentional breaking compatibility change, so
+  this release uses a new major version even though the v2 container format is
+  unchanged.
 
 ### Legacy v1 Migration
 
 There is no v1 reader in the stable binary. To migrate a trusted v1 container,
 use the archived `v2.2.0-beta.1` (or an earlier compatible release) to extract
-it, then pack that directory with v2.2.0. Never use the legacy reader for an
+it, then pack that directory with v3.0.0. Never use the legacy reader for an
 untrusted container.
 
 ## Installation

@@ -40,7 +40,8 @@ header. This is a best-effort experiment, not secure erase. Any other copy of
 the wrapped DEK, the live DEK, or the container can preserve access.
 
 Legacy v1 containers used a public, fast BLAKE3 password verifier. CipherFS
-v2.2.0 does not include the v1 reader.
+v3.0.0 does not include the v1 reader. Removing that reader is a breaking
+compatibility change and is the reason for the v3 major version.
 
 ## Untrusted Containers
 
