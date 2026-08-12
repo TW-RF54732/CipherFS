@@ -26,10 +26,11 @@ after that release is deployed.
 1. Confirm the branch, clean worktree, recent commits, `.github` workflows and
    intended version. Do not stage unrelated changes.
 2. On a clean Windows runner before WinFsp installation, verify non-mount CLI
-   startup, the PE delay import, and the missing-runtime error/install URL.
+   and shell headless startup, both PE delay imports, and the missing-runtime error/install URL.
    Then, on Windows with the official WinFsp runtime installed, run:
-   `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`,
-   `cargo test --locked -- --test-threads=1`, the release build, and actual
+   `cipherfs-shell.exe --headless-smoke`, `cargo fmt --check`,
+   `cargo clippy --locked --workspace --all-targets -- -D warnings`,
+   `cargo test --locked --workspace -- --test-threads=1`, the release build, and actual
    folder/drive/`auto` mount smoke including corruption and Ctrl+C unmount.
 3. On the pinned GitHub Linux runner with FUSE 3 and `musl-tools`, repeat fmt,
    Clippy, tests,
@@ -54,4 +55,11 @@ after that release is deployed.
 The tag workflow does not rebuild in the release job. It downloads only the
 Linux and Windows binaries already produced by their runtime-tested jobs,
 packages licenses/source, signs canonical manifests, creates attestations and
-then creates the prerelease or final draft.
+then creates the prerelease or final draft. The Windows release must include
+`cipherfs.exe`, `cipherfs-shell.exe`, the legacy CLI manifest, and the strict
+eight-field integration manifest plus Minisign signatures. Verify both before
+publishing; the latter controls managed two-binary replacement only.
+
+The managed installer/updater remains an isolated but deferred-hardening area:
+do not describe it as fully transactional until install-root locking, active
+operation exclusion, and failure-injection rollback coverage are implemented.

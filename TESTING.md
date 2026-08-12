@@ -7,12 +7,18 @@ filesystem. Record each platform runtime result separately.
 
 ```text
 cargo fmt --check
-cargo clippy --locked --all-targets -- -D warnings
-cargo test --locked -- --test-threads=1
+cargo check --locked --workspace --all-targets
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo test --locked --workspace -- --test-threads=1
 cargo build --locked --release
 cargo audit --ignore RUSTSEC-2024-0436
 cargo deny --locked check advisories licenses sources
 ```
+
+Each of the six workspace packages must also pass an independent
+`cargo check -p <package>`. The `cipherfs-core` dependency tree must not contain
+Clap, rpassword, Indicatif, reqwest, self-replace, FUSE, WinFsp, or Win32
+UI/Registry features.
 
 The only advisory exception is the unmaintained `paste` dependency currently
 introduced by `winfsp`. A new vulnerability, unsoundness advisory, license or
@@ -23,9 +29,26 @@ unknown source fails the release gate.
 Run the non-mount CLI smoke before installing WinFsp on a clean VM. `--help`,
 `--version`, `licenses`, pack, verify, extract and passwd must run without
 loading `winfsp-x64.dll`; `mount` must give the official runtime URL.
-The pre-install CI test sets `CIPHERFS_EXPECT_WINFSP_MISSING=1` and calls the
-runtime loader directly, so a hosted image that already contains WinFsp fails
-instead of silently weakening this gate.
+The pre-install CI shell smoke uses `--winfsp-runtime-missing-smoke` to call the
+adapter runtime loader through a delay-linked final binary. A hosted image that
+already contains WinFsp fails instead of silently weakening this gate.
+
+The standalone `cipherfs-winfsp` test harness is excluded before runtime
+installation because it is intentionally not delay-linked at the adapter
+boundary. After installation, add the official WinFsp `bin` directory to
+`PATH` and run that package's runtime tests. The final CLI and shell binaries
+are independently checked for delay-load imports before installation.
+
+Also build `cipherfs-shell.exe`. In a disposable current-user profile, verify
+that Install writes only `%LOCALAPPDATA%\Programs\CipherFS` and HKCU Classes
+entries, does not change `UserChoice`, registers quoted `.cfs` and directory
+commands, and Uninstall removes only CipherFS-owned registration. Confirm that
+the Windows 11 folder verb is present under **Show more options**. Exercise
+mount/open/unmount, safe and forced worker cancellation cleanup for
+Pack/Extract/Verify, wrong password, existing extraction destination and the
+WinFsp-missing download prompt. A managed update must reject a
+changed/truncated executable. Cross-process locking and exhaustive replacement
+rollback testing remain deferred and must not be claimed as completed.
 
 After installing the pinned official WinFsp 2.1 MSI, set
 `CIPHERFS_WINFSP_E2E=1` and `CIPHERFS_WINFSP_FOLDER_E2E=1`, then run the tests
@@ -35,6 +58,8 @@ read-only mutations, exact corruption failure and clean unmount. Junction tests
 verify that extraction and directory mounts do not traverse reparse ancestors.
 The updater suite also runs a copied test executable and replaces it while it
 is executing, then verifies the installed bytes from the parent process.
+It additionally validates the strict eight-field Windows integration manifest;
+the legacy five-field portable CLI manifest remains separately compatible.
 
 ## Linux runtime
 

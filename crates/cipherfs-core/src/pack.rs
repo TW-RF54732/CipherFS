@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use indicatif::{ProgressBar, ProgressStyle};
 use rand::Rng;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
@@ -9,6 +8,12 @@ use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 use zeroize::{Zeroize, Zeroizing};
 
+#[cfg(test)]
+use crate::operation::NoProgress;
+use crate::operation::{
+    CancellationToken, OperationControl, OperationEvent, OperationPhase, OperationProgress,
+    ProgressReporter, ProgressTracker, TemporaryArtifactKind,
+};
 use crate::platform_io::PlatformFileExt;
 use crate::platform_metadata::FileFingerprint;
 
@@ -30,11 +35,73 @@ struct TempOutput {
     keep: bool,
 }
 
+struct SelfVerifyReporter<'a>(&'a dyn ProgressReporter);
+
+impl ProgressReporter for SelfVerifyReporter<'_> {
+    fn report(&self, mut progress: OperationProgress) {
+        if progress.phase == OperationPhase::Verify {
+            progress.phase = OperationPhase::SelfVerify;
+        }
+        self.0.report(progress);
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PackFault {
     None,
     OutputAfterTemp,
     SourceChangedAfterScan,
+}
+
+#[derive(Debug, Clone)]
+pub struct PackOptions {
+    pub argon2_m_cost: u32,
+    pub argon2_t_cost: u32,
+    pub argon2_p_cost: u32,
+    pub max_index_size: u64,
+    pub threads: usize,
+    /// Frontend-selected sibling temporary path. Intended for an isolated
+    /// worker whose parent must be able to clean up one exact artifact.
+    pub temporary_path: Option<PathBuf>,
+}
+
+impl Default for PackOptions {
+    fn default() -> Self {
+        Self {
+            argon2_m_cost: 65_536,
+            argon2_t_cost: 3,
+            argon2_p_cost: 4,
+            max_index_size: MAX_INDEX_SIZE,
+            threads: 0,
+            temporary_path: None,
+        }
+    }
+}
+
+pub struct PackRequest<'a> {
+    pub source: &'a Path,
+    pub output: &'a Path,
+    pub password: &'a str,
+    pub duress_password: Option<&'a str>,
+    pub options: PackOptions,
+}
+
+pub fn execute(request: PackRequest<'_>, control: OperationControl<'_>) -> Result<()> {
+    pack_with_control_and_temp(
+        request.source,
+        request.output,
+        request.password,
+        request.duress_password,
+        request.options.argon2_m_cost,
+        request.options.argon2_t_cost,
+        request.options.argon2_p_cost,
+        request.options.max_index_size,
+        request.options.threads,
+        request.options.temporary_path.as_deref(),
+        control.cancellation,
+        control.reporter,
+    )
+    .map_err(crate::operation::typed)
 }
 
 impl Drop for TempOutput {
@@ -46,6 +113,7 @@ impl Drop for TempOutput {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 pub fn pack(
     source_dir: &Path,
     output_file: &Path,
@@ -56,6 +124,70 @@ pub fn pack(
     argon2_p_cost: u32,
     max_index_size: u64,
     threads: usize,
+) -> Result<()> {
+    let cancellation = CancellationToken::default();
+    let progress = NoProgress;
+    pack_with_control(
+        source_dir,
+        output_file,
+        password,
+        duress_password,
+        argon2_m_cost,
+        argon2_t_cost,
+        argon2_p_cost,
+        max_index_size,
+        threads,
+        &cancellation,
+        &progress,
+    )
+}
+
+/// Pack a v2 container while reporting presentation-neutral progress.
+#[allow(clippy::too_many_arguments)]
+#[cfg(test)]
+pub fn pack_with_control(
+    source_dir: &Path,
+    output_file: &Path,
+    password: &str,
+    duress_password: Option<&str>,
+    argon2_m_cost: u32,
+    argon2_t_cost: u32,
+    argon2_p_cost: u32,
+    max_index_size: u64,
+    threads: usize,
+    cancellation: &CancellationToken,
+    reporter: &dyn ProgressReporter,
+) -> Result<()> {
+    pack_with_control_and_temp(
+        source_dir,
+        output_file,
+        password,
+        duress_password,
+        argon2_m_cost,
+        argon2_t_cost,
+        argon2_p_cost,
+        max_index_size,
+        threads,
+        None,
+        cancellation,
+        reporter,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn pack_with_control_and_temp(
+    source_dir: &Path,
+    output_file: &Path,
+    password: &str,
+    duress_password: Option<&str>,
+    argon2_m_cost: u32,
+    argon2_t_cost: u32,
+    argon2_p_cost: u32,
+    max_index_size: u64,
+    threads: usize,
+    requested_temporary_path: Option<&Path>,
+    cancellation: &CancellationToken,
+    reporter: &dyn ProgressReporter,
 ) -> Result<()> {
     crate::parallel::install(threads, || {
         pack_inner(
@@ -68,6 +200,9 @@ pub fn pack(
             argon2_p_cost,
             max_index_size,
             PackFault::None,
+            requested_temporary_path,
+            cancellation,
+            reporter,
         )
     })
 }
@@ -83,7 +218,11 @@ fn pack_inner(
     argon2_p_cost: u32,
     max_index_size: u64,
     injected_fault: PackFault,
+    requested_temporary_path: Option<&Path>,
+    cancellation: &CancellationToken,
+    reporter: &dyn ProgressReporter,
 ) -> Result<()> {
+    cancellation.check()?;
     let source_meta = std::fs::symlink_metadata(source_dir)
         .with_context(|| format!("Unable to inspect {}", source_dir.display()))?;
     if !source_meta.is_dir() || is_reparse_point(&source_meta) {
@@ -98,14 +237,19 @@ fn pack_inner(
         p_cost: argon2_p_cost,
     };
     v2::validate_argon2(&params)?;
+    cancellation.check()?;
 
-    println!("[Info] Scanning {}...", source_dir.display());
-    let (entries, sources, total_plaintext, data_size) = scan_source(source_dir)?;
-    println!(
-        "[Info] Found {} entries and {} bytes.",
-        entries.len().saturating_sub(1),
-        total_plaintext
-    );
+    reporter.event(OperationEvent::PhaseStarted(OperationPhase::Scan));
+    reporter.event(OperationEvent::Progress(OperationProgress {
+        phase: OperationPhase::Scan,
+        completed: 0,
+        total: 0,
+    }));
+    let (entries, sources, total_plaintext, data_size) = scan_source(source_dir, cancellation)?;
+    reporter.event(OperationEvent::ScanCompleted {
+        entries: entries.len().saturating_sub(1),
+        bytes: total_plaintext,
+    });
 
     let index = Index { entries };
     let serialized_index = Zeroizing::new(rmp_serde::to_vec(&index)?);
@@ -142,8 +286,11 @@ fn pack_inner(
         slots: [KeySlot::random_disabled(), KeySlot::random_disabled()],
         duress: v2::DuressSlot::random_disabled(),
     };
+    reporter.event(OperationEvent::PhaseStarted(OperationPhase::KeyDerivation));
     v2::configure_duress(&mut header, duress_password, params)?;
+    cancellation.check()?;
     header.slots[0] = v2::make_key_slot(&header, password, &dek, 1, params)?;
+    cancellation.check()?;
 
     let index_key = Zeroizing::new(v2::derive_index_key(&dek, &header.container_id)?);
     let mut encrypted_index = v2::encrypt_aead(
@@ -156,7 +303,10 @@ fn pack_inner(
         anyhow::bail!("Internal index size mismatch");
     }
 
-    let temp_path = temporary_path(output_file)?;
+    let temp_path = match requested_temporary_path {
+        Some(path) => validate_requested_temporary_path(output_file, path)?,
+        None => temporary_path(output_file)?,
+    };
     let mut temp_guard = TempOutput {
         path: temp_path.clone(),
         keep: false,
@@ -167,6 +317,10 @@ fn pack_inner(
         .create_new(true)
         .open(&temp_path)
         .context("Unable to create temporary container")?;
+    reporter.event(OperationEvent::TemporaryArtifact {
+        kind: TemporaryArtifactKind::PackContainer,
+        path: temp_path.clone(),
+    });
     let data_start = (HEADER_SIZE as u64)
         .checked_add(header.index_size)
         .context("Container data offset overflow")?;
@@ -190,14 +344,7 @@ fn pack_inner(
             .write_all(b"changed")?;
     }
 
-    let progress = ProgressBar::new(total_plaintext);
-    progress.set_style(
-        ProgressStyle::default_bar()
-            .template(
-                "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})",
-            )?
-            .progress_chars("#>-"),
-    );
+    let progress = ProgressTracker::new(OperationPhase::Encrypt, total_plaintext, reporter);
 
     let entry_by_id: HashMap<u64, &Entry> = index
         .entries
@@ -207,35 +354,57 @@ fn pack_inner(
     sources
         .par_iter()
         .try_for_each(|(entry_id, snapshot)| -> Result<()> {
+            cancellation.check()?;
             let entry = entry_by_id
                 .get(entry_id)
                 .context("Internal source entry mismatch")?;
             encrypt_source_file(
-                &output, data_start, snapshot, entry, &header, &dek, &progress,
+                &output,
+                data_start,
+                snapshot,
+                entry,
+                &header,
+                &dek,
+                &progress,
+                cancellation,
             )
         })?;
 
     output.sync_all()?;
     drop(output);
-    progress.finish_with_message("Encrypted");
-
-    println!("[Info] Verifying completed container...");
+    cancellation.check()?;
+    reporter.event(OperationEvent::PhaseStarted(OperationPhase::KeyDerivation));
     let opened = v2::open(&temp_path, password)
         .context("Self-verification could not reopen v2 container")?;
-    v2::verify_all(&opened).context("Self-verification of packed container failed")?;
+    cancellation.check()?;
+    reporter.event(OperationEvent::PhaseStarted(OperationPhase::SelfVerify));
+    reporter.event(OperationEvent::Progress(OperationProgress {
+        phase: OperationPhase::SelfVerify,
+        completed: 0,
+        total: total_plaintext,
+    }));
+    let self_verify_reporter = SelfVerifyReporter(reporter);
+    v2::verify_all_with_control(&opened, cancellation, &self_verify_reporter)
+        .context("Self-verification of packed container failed")?;
     drop(opened);
+    cancellation.check()?;
 
+    cancellation.check()?;
+    reporter.event(OperationEvent::PhaseStarted(OperationPhase::Commit));
+    reporter.event(OperationEvent::CommitStarted);
     rename_file_no_replace(&temp_path, output_file)
         .with_context(|| format!("Unable to install {}", output_file.display()))?;
     if let Err(error) = sync_parent(output_parent(output_file)) {
-        eprintln!("[Warning] Unable to sync output parent after commit: {error:#}");
+        reporter.event(OperationEvent::Warning(format!(
+            "Unable to sync output parent after commit: {error:#}"
+        )));
     }
     temp_guard.keep = true;
-    println!("[Success] {} created and verified.", output_file.display());
+    reporter.event(OperationEvent::Committed);
     Ok(())
 }
 
-fn scan_source(source_dir: &Path) -> Result<ScanResult> {
+fn scan_source(source_dir: &Path, cancellation: &CancellationToken) -> Result<ScanResult> {
     let mut entries = vec![Entry {
         id: 1,
         parent_id: 1,
@@ -261,6 +430,7 @@ fn scan_source(source_dir: &Path) -> Result<ScanResult> {
         .sort_by_file_name()
         .into_iter()
     {
+        cancellation.check()?;
         let item = item?;
         if item.path() == source_dir {
             continue;
@@ -353,6 +523,7 @@ fn scan_source(source_dir: &Path) -> Result<ScanResult> {
     Ok((entries, sources, total_plaintext, data_offset))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn encrypt_source_file(
     output: &File,
     data_start: u64,
@@ -360,7 +531,8 @@ fn encrypt_source_file(
     entry: &Entry,
     header: &Header,
     dek: &[u8; 32],
-    progress: &ProgressBar,
+    progress: &ProgressTracker<'_>,
+    cancellation: &CancellationToken,
 ) -> Result<()> {
     let file = File::open(&snapshot.path)
         .with_context(|| format!("Unable to open {}", snapshot.path.display()))?;
@@ -373,6 +545,7 @@ fn encrypt_source_file(
     (0..entry.chunk_count)
         .into_par_iter()
         .try_for_each(|chunk_index| -> Result<()> {
+            cancellation.check()?;
             let plain_offset = chunk_index
                 .checked_mul(CHUNK_SIZE as u64)
                 .context("Source chunk offset overflow")?;
@@ -401,7 +574,7 @@ fn encrypt_source_file(
                 .context("Encrypted chunk position overflow")?;
             output.write_all_at(&encrypted, destination)?;
             encrypted.zeroize();
-            progress.inc(expected as u64);
+            progress.advance(expected as u64);
             Ok(())
         })?;
     ensure_unchanged(snapshot, &file)?;
@@ -485,6 +658,28 @@ fn temporary_path(output: &Path) -> Result<PathBuf> {
     anyhow::bail!("Unable to allocate a temporary output name")
 }
 
+fn validate_requested_temporary_path(output: &Path, requested: &Path) -> Result<PathBuf> {
+    let output_absolute: PathBuf = std::path::absolute(output)?.components().collect();
+    let requested_absolute: PathBuf = std::path::absolute(requested)?.components().collect();
+    anyhow::ensure!(
+        requested_absolute.parent() == output_absolute.parent(),
+        "Temporary container must be a sibling of the final output"
+    );
+    anyhow::ensure!(
+        requested_absolute != output_absolute,
+        "Temporary container must differ from the final output"
+    );
+    anyhow::ensure!(
+        requested_absolute.file_name().is_some(),
+        "Temporary container must name a file"
+    );
+    anyhow::ensure!(
+        std::fs::symlink_metadata(&requested_absolute).is_err(),
+        "Temporary container already exists"
+    );
+    Ok(requested_absolute)
+}
+
 fn output_parent(output: &Path) -> &Path {
     output
         .parent()
@@ -495,6 +690,36 @@ fn output_parent(output: &Path) -> &Path {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct CancelAt<'a> {
+        token: &'a CancellationToken,
+        phase: Option<OperationPhase>,
+        commit: bool,
+    }
+
+    struct CancelAtMutation<'a>(&'a CancellationToken);
+
+    impl ProgressReporter for CancelAtMutation<'_> {
+        fn report(&self, _progress: OperationProgress) {}
+
+        fn event(&self, event: OperationEvent) {
+            if event == OperationEvent::MutationStarted {
+                self.0.cancel();
+            }
+        }
+    }
+
+    impl ProgressReporter for CancelAt<'_> {
+        fn report(&self, _progress: OperationProgress) {}
+
+        fn event(&self, event: OperationEvent) {
+            if matches!(event, OperationEvent::PhaseStarted(phase) if Some(phase) == self.phase)
+                || (self.commit && event == OperationEvent::CommitStarted)
+            {
+                self.token.cancel();
+            }
+        }
+    }
 
     fn random_test_password() -> String {
         let mut value = [0u8; 32];
@@ -514,6 +739,21 @@ mod tests {
     }
 
     #[test]
+    fn requested_temporary_path_must_be_a_new_output_sibling() {
+        let temp = tempfile::tempdir().unwrap();
+        let output = temp.path().join("vault.cfs");
+        let sibling = temp.path().join(".worker.tmp");
+        assert_eq!(
+            validate_requested_temporary_path(&output, &sibling).unwrap(),
+            std::path::absolute(&sibling).unwrap()
+        );
+        let elsewhere = tempfile::tempdir().unwrap().path().join(".worker.tmp");
+        assert!(validate_requested_temporary_path(&output, &elsewhere).is_err());
+        std::fs::write(&sibling, b"occupied").unwrap();
+        assert!(validate_requested_temporary_path(&output, &sibling).is_err());
+    }
+
+    #[test]
     fn injected_output_failure_removes_temporary_container() {
         let temp = tempfile::tempdir().unwrap();
         let source = temp.path().join("source");
@@ -521,6 +761,8 @@ mod tests {
         std::fs::create_dir(&source).unwrap();
         std::fs::write(source.join("file.bin"), b"private").unwrap();
         let password = random_test_password();
+        let cancellation = CancellationToken::default();
+        let reporter = NoProgress;
 
         let error = pack_inner(
             &source,
@@ -532,6 +774,9 @@ mod tests {
             1,
             16 * 1024 * 1024,
             PackFault::OutputAfterTemp,
+            None,
+            &cancellation,
+            &reporter,
         )
         .unwrap_err();
         assert!(format!("{error:#}").contains("Injected container output failure"));
@@ -546,6 +791,137 @@ mod tests {
     }
 
     #[test]
+    fn cancellation_before_pack_creates_no_output() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let output = temp.path().join("vault.cfs");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(source.join("file.bin"), b"private").unwrap();
+        let cancellation = CancellationToken::default();
+        cancellation.cancel();
+        let reporter = NoProgress;
+        assert!(
+            pack_with_control(
+                &source,
+                &output,
+                "master",
+                None,
+                crate::v2::MIN_ARGON_MEMORY_KIB,
+                1,
+                1,
+                16 * 1024 * 1024,
+                1,
+                &cancellation,
+                &reporter,
+            )
+            .is_err()
+        );
+        assert!(!output.exists());
+    }
+
+    fn phase_cancellation_case(phase: OperationPhase, should_commit: bool) {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let output = temp.path().join("vault.cfs");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(source.join("file.bin"), b"small cancellation fixture").unwrap();
+        let cancellation = CancellationToken::default();
+        let reporter = CancelAt {
+            token: &cancellation,
+            phase: (!should_commit).then_some(phase),
+            commit: should_commit,
+        };
+        let result = execute(
+            PackRequest {
+                source: &source,
+                output: &output,
+                password: "master",
+                duress_password: None,
+                options: PackOptions {
+                    argon2_m_cost: crate::v2::MIN_ARGON_MEMORY_KIB,
+                    argon2_t_cost: 1,
+                    argon2_p_cost: 1,
+                    max_index_size: 16 * 1024 * 1024,
+                    threads: 1,
+                    temporary_path: None,
+                },
+            },
+            OperationControl::new(&cancellation, &reporter),
+        );
+        if should_commit {
+            result.unwrap();
+            assert!(
+                output.is_file(),
+                "commit zone must ignore late cancellation"
+            );
+        } else {
+            assert_eq!(
+                crate::operation::error_kind(&result.unwrap_err()),
+                crate::operation::CoreErrorKind::Cancelled
+            );
+            assert!(!output.exists());
+        }
+        assert!(std::fs::read_dir(temp.path()).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".vault.cfs.")
+        }));
+    }
+
+    #[test]
+    fn scan_key_derivation_encrypt_and_self_verify_can_cancel_safely() {
+        for phase in [
+            OperationPhase::Scan,
+            OperationPhase::KeyDerivation,
+            OperationPhase::Encrypt,
+            OperationPhase::SelfVerify,
+        ] {
+            phase_cancellation_case(phase, false);
+        }
+    }
+
+    #[test]
+    fn cancellation_after_commit_started_does_not_create_partial_failure() {
+        phase_cancellation_case(OperationPhase::Commit, true);
+    }
+
+    #[test]
+    fn cancellation_after_password_mutation_started_is_ignored() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let container = temp.path().join("vault.cfs");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(source.join("file.bin"), b"password mutation fixture").unwrap();
+        pack(
+            &source,
+            &container,
+            "old password",
+            None,
+            crate::v2::MIN_ARGON_MEMORY_KIB,
+            1,
+            1,
+            16 * 1024 * 1024,
+            1,
+        )
+        .unwrap();
+        let cancellation = CancellationToken::default();
+        let reporter = CancelAtMutation(&cancellation);
+        crate::v2::change_password_with_control(
+            &container,
+            "old password",
+            "new password",
+            &cancellation,
+            &reporter,
+        )
+        .unwrap();
+        assert!(cancellation.is_cancelled());
+        assert!(crate::v2::open(&container, "new password").is_ok());
+        assert!(crate::v2::open(&container, "old password").is_err());
+    }
+
+    #[test]
     fn source_change_after_scan_aborts_and_removes_temporary_container() {
         let temp = tempfile::tempdir().unwrap();
         let source = temp.path().join("source");
@@ -553,6 +929,8 @@ mod tests {
         std::fs::create_dir(&source).unwrap();
         std::fs::write(source.join("file.bin"), b"private").unwrap();
         let password = random_test_password();
+        let cancellation = CancellationToken::default();
+        let reporter = NoProgress;
 
         let error = pack_inner(
             &source,
@@ -564,6 +942,9 @@ mod tests {
             1,
             16 * 1024 * 1024,
             PackFault::SourceChangedAfterScan,
+            None,
+            &cancellation,
+            &reporter,
         )
         .unwrap_err();
         assert!(format!("{error:#}").contains("Source file changed while packing"));

@@ -1,11 +1,14 @@
+#![cfg(unix)]
+
+use anyhow::Context;
 use fuser::{
-    FileAttr, FileHandle, FileType, Filesystem, Generation, INodeNo, LockOwner, OpenFlags,
-    ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry, Request,
+    BackgroundSession, Config, FileAttr, FileHandle, FileType, Filesystem, Generation, INodeNo,
+    LockOwner, MountOption, OpenFlags, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry, Request,
 };
 use std::path::Path;
 use std::time::{Duration, UNIX_EPOCH};
 
-use crate::readonly_fs::{FsError, FsErrorKind, Node, NodeKind, ReadOnlyFs};
+use cipherfs_core::{FsError, FsErrorKind, Node, NodeKind, ReadOnlyFs};
 
 const TTL: Duration = Duration::from_secs(1);
 pub struct CipherFS(ReadOnlyFs);
@@ -13,6 +16,27 @@ pub struct CipherFS(ReadOnlyFs);
 impl CipherFS {
     pub fn new(path: &Path, password: &str, cache_mib: u64) -> anyhow::Result<Self> {
         Ok(Self(ReadOnlyFs::open(path, password, cache_mib)?))
+    }
+}
+
+pub struct FuseMountSession {
+    _session: BackgroundSession,
+}
+
+impl FuseMountSession {
+    pub fn start(
+        container: &Path,
+        mountpoint: &Path,
+        password: &str,
+        cache_mib: u64,
+    ) -> anyhow::Result<Self> {
+        let filesystem = CipherFS::new(container, password, cache_mib)?;
+        std::fs::create_dir_all(mountpoint).context("Unable to create mount point directory")?;
+        let mut config = Config::default();
+        config.mount_options = vec![MountOption::RO, MountOption::FSName("cipherfs".to_string())];
+        let session =
+            fuser::spawn_mount2(filesystem, mountpoint, &config).context("FUSE mount failed")?;
+        Ok(Self { _session: session })
     }
 }
 
@@ -94,12 +118,7 @@ impl Filesystem for CipherFS {
         let _ = (req, fh, flags, lock_owner);
         match self.0.read(ino.into(), offset, size) {
             Ok(output) => reply.data(&output),
-            Err(error) => {
-                if error.kind() == FsErrorKind::Integrity {
-                    eprintln!("[Integrity] {error}");
-                }
-                reply.error(fuse_error(&error).into());
-            }
+            Err(error) => reply.error(fuse_error(&error).into()),
         }
     }
 }

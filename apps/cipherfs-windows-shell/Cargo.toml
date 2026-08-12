@@ -1,0 +1,39 @@
+[package]
+name = "cipherfs-windows-shell"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "cipherfs-shell"
+path = "src/main.rs"
+
+[target.'cfg(windows)'.dependencies]
+anyhow.workspace = true
+cipherfs-core = { path = "../../crates/cipherfs-core" }
+cipherfs-update = { path = "../../crates/cipherfs-update" }
+cipherfs-winfsp = { path = "../../crates/cipherfs-winfsp" }
+hex.workspace = true
+rand.workspace = true
+rmp-serde.workspace = true
+serde.workspace = true
+self-replace.workspace = true
+zeroize.workspace = true
+windows = { version = "0.61.3", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Security_Credentials",
+    "Win32_System_Com",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Win32_UI_Controls",
+    "Win32_UI_Controls_Dialogs",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[target.'cfg(windows)'.build-dependencies]
+winfsp = "0.13.0"
+
+[dev-dependencies]
+tempfile.workspace = true

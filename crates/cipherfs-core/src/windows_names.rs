@@ -135,16 +135,8 @@ impl WindowsNameMap {
             .copied()
     }
 
-    pub fn warn(&self) {
-        for (original, display) in &self.changes {
-            eprintln!("[Warning] Windows name mapping: {original:?} -> {display:?}");
-        }
-        if !self.changes.is_empty() {
-            eprintln!(
-                "[Warning] {} name(s) were mapped for Windows compatibility.",
-                self.changes.len()
-            );
-        }
+    pub fn changes(&self) -> &[(String, String)] {
+        &self.changes
     }
 }
 

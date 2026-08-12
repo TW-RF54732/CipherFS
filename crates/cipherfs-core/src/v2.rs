@@ -716,14 +716,44 @@ pub fn open(path: &Path, password: &str) -> Result<OpenedContainer> {
 }
 
 pub fn change_password(path: &Path, old_password: &str, new_password: &str) -> Result<()> {
+    let cancellation = crate::operation::CancellationToken::default();
+    let reporter = crate::operation::NoProgress;
+    change_password_with_control(path, old_password, new_password, &cancellation, &reporter)
+}
+
+pub fn change_password_with_control(
+    path: &Path,
+    old_password: &str,
+    new_password: &str,
+    cancellation: &crate::operation::CancellationToken,
+    reporter: &dyn crate::operation::ProgressReporter,
+) -> Result<()> {
+    change_password_inner(path, old_password, new_password, cancellation, reporter)
+        .map_err(crate::operation::typed)
+}
+
+fn change_password_inner(
+    path: &Path,
+    old_password: &str,
+    new_password: &str,
+    cancellation: &crate::operation::CancellationToken,
+    reporter: &dyn crate::operation::ProgressReporter,
+) -> Result<()> {
+    cancellation.check()?;
     let mut file = OpenOptions::new().read(true).write(true).open(path)?;
     let mut header = read_header(&file)?;
+    reporter.event(crate::operation::OperationEvent::PhaseStarted(
+        crate::operation::OperationPhase::KeyDerivation,
+    ));
     if matches!(unlock(&header, new_password)?, UnlockResult::Duress) {
         anyhow::bail!("New master password must differ from the configured Duress password");
     }
+    cancellation.check()?;
     let dek = match unlock(&header, old_password)? {
         UnlockResult::Unlocked(dek) => dek,
         UnlockResult::Duress => {
+            cancellation.check()?;
+            reporter.event(crate::operation::OperationEvent::MutationStarted);
             drop(file);
             wipe_for_duress(path, header)?;
             anyhow::bail!("Unable to unlock container (wrong password or damage)");
@@ -754,6 +784,8 @@ pub fn change_password(path: &Path, old_password: &str, new_password: &str) -> R
             .context("Keyslot generation overflow")?,
         params,
     )?;
+    cancellation.check()?;
+    reporter.event(crate::operation::OperationEvent::MutationStarted);
     write_header(&mut file, &header)?;
 
     header.slots[previous] = KeySlot::random_disabled();
@@ -817,7 +849,55 @@ pub fn decrypt_chunk(
     Ok(Zeroizing::new(plaintext))
 }
 
+#[cfg(test)]
 pub fn verify_all(opened: &OpenedContainer) -> Result<()> {
+    let cancellation = crate::operation::CancellationToken::default();
+    let reporter = crate::operation::NoProgress;
+    verify_all_with_control(opened, &cancellation, &reporter)
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct VerifyOptions {
+    pub threads: usize,
+}
+
+pub struct VerifyRequest<'a> {
+    pub container: &'a Path,
+    pub password: &'a str,
+    pub options: VerifyOptions,
+}
+
+pub fn verify(
+    request: VerifyRequest<'_>,
+    control: crate::operation::OperationControl<'_>,
+) -> Result<()> {
+    verify_inner(request, control).map_err(crate::operation::typed)
+}
+
+fn verify_inner(
+    request: VerifyRequest<'_>,
+    control: crate::operation::OperationControl<'_>,
+) -> Result<()> {
+    control.cancellation.check()?;
+    control
+        .reporter
+        .event(crate::operation::OperationEvent::PhaseStarted(
+            crate::operation::OperationPhase::KeyDerivation,
+        ));
+    let opened = open(request.container, request.password)?;
+    control.cancellation.check()?;
+    crate::parallel::install(request.options.threads, || {
+        verify_all_with_control(&opened, control.cancellation, control.reporter)
+    })
+}
+
+/// Authenticate every encrypted chunk while emitting progress at chunk
+/// boundaries. The decrypted temporary buffer is dropped before the next event.
+pub fn verify_all_with_control(
+    opened: &OpenedContainer,
+    cancellation: &crate::operation::CancellationToken,
+    reporter: &dyn crate::operation::ProgressReporter,
+) -> Result<()> {
     let mut files: Vec<&Entry> = opened
         .index
         .entries
@@ -825,13 +905,28 @@ pub fn verify_all(opened: &OpenedContainer) -> Result<()> {
         .filter(|entry| entry.kind == EntryKind::File)
         .collect();
     files.sort_by_key(|entry| entry.data_offset);
+    let total = files.iter().try_fold(0u64, |sum, entry| {
+        sum.checked_add(entry.size)
+            .context("Total verification size overflow")
+    })?;
+    let progress = crate::operation::ProgressTracker::new(
+        crate::operation::OperationPhase::Verify,
+        total,
+        reporter,
+    );
     files.par_iter().try_for_each(|entry| -> Result<()> {
         (0..entry.chunk_count)
             .into_par_iter()
             .try_for_each(|chunk_index| -> Result<()> {
+                cancellation.check()?;
                 let _plaintext = decrypt_chunk(opened, entry, chunk_index).with_context(|| {
                     format!("File entry {} chunk {} failed", entry.id, chunk_index)
                 })?;
+                let plain_offset = chunk_index
+                    .checked_mul(CHUNK_SIZE as u64)
+                    .context("Verification chunk offset overflow")?;
+                let amount = std::cmp::min(CHUNK_SIZE as u64, entry.size - plain_offset);
+                progress.advance(amount);
                 Ok(())
             })
     })

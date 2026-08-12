@@ -12,9 +12,10 @@ The full license is included in `LICENSE-GPL-3.0` and is available from
 <https://www.gnu.org/licenses/gpl-3.0.html>.
 
 The vendored `winfsp-sys` 0.12.1+winfsp-2.1 build script is modified to reuse
-the crate's pregenerated bindings instead of requiring libclang. CipherFS's
-root build script separately enables delay-load linking of `winfsp-x64.dll`.
-See `VENDORED_WINFSP.md` for provenance, hashes and review rules.
+the crate's pregenerated bindings instead of requiring libclang. The final
+Windows CLI and Shell build scripts separately enable delay-load linking of
+`winfsp-x64.dll`. See `VENDORED_WINFSP.md` for provenance, hashes and review
+rules.
 
 WinFsp - Windows File System Proxy, Copyright (C) Bill Zissimopoulos.
 <https://github.com/winfsp/winfsp>

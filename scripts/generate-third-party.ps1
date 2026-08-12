@@ -18,7 +18,7 @@ $lines.Add("| Package | License metadata | Exact source |")
 $lines.Add("| --- | --- | --- |")
 
 $packages = $metadata.packages |
-    Where-Object { $_.name -ne "cipherfs" } |
+    Where-Object { $_.source -or $_.name -eq "winfsp-sys" } |
     Sort-Object name, version -Unique
 foreach ($package in $packages) {
     $name = $package.name.Replace("|", "\|")

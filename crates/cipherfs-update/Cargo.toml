@@ -1,0 +1,18 @@
+[package]
+name = "cipherfs-update"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+hex.workspace = true
+minisign-verify.workspace = true
+reqwest.workspace = true
+semver.workspace = true
+serde.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+self-replace.workspace = true
+tempfile.workspace = true

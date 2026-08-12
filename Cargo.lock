@@ -286,39 +286,106 @@ dependencies = [
 ]
 
 [[package]]
-name = "cipherfs"
-version = "3.0.0"
+name = "cipherfs-cli"
+version = "3.1.0-beta"
+dependencies = [
+ "anyhow",
+ "cipherfs-core",
+ "cipherfs-fuse",
+ "cipherfs-update",
+ "cipherfs-winfsp",
+ "clap",
+ "ctrlc",
+ "hex",
+ "indicatif",
+ "rand",
+ "rpassword",
+ "self-replace",
+ "winfsp",
+ "zeroize",
+]
+
+[[package]]
+name = "cipherfs-core"
+version = "3.1.0-beta"
 dependencies = [
  "anyhow",
  "argon2",
  "blake3",
  "cap-std",
  "chacha20poly1305",
- "clap",
- "ctrlc",
- "fuser",
  "hex",
  "hkdf",
- "indicatif",
  "libc",
- "minisign-verify",
  "parking_lot",
  "rand",
  "rayon",
- "reqwest",
  "rmp-serde",
- "rpassword",
- "self-replace",
- "semver",
  "serde",
  "serde-big-array",
  "sha2",
  "tempfile",
  "walkdir",
  "windows",
+ "zeroize",
+]
+
+[[package]]
+name = "cipherfs-fuse"
+version = "3.1.0-beta"
+dependencies = [
+ "anyhow",
+ "cipherfs-core",
+ "fuser",
+ "libc",
+]
+
+[[package]]
+name = "cipherfs-update"
+version = "3.1.0-beta"
+dependencies = [
+ "anyhow",
+ "hex",
+ "minisign-verify",
+ "reqwest",
+ "self-replace",
+ "semver",
+ "serde",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
+name = "cipherfs-windows-shell"
+version = "3.1.0-beta"
+dependencies = [
+ "anyhow",
+ "cipherfs-core",
+ "cipherfs-update",
+ "cipherfs-winfsp",
+ "hex",
+ "rand",
+ "rmp-serde",
+ "self-replace",
+ "serde",
+ "tempfile",
+ "windows",
+ "winfsp",
+ "zeroize",
+]
+
+[[package]]
+name = "cipherfs-winfsp"
+version = "3.1.0-beta"
+dependencies = [
+ "anyhow",
+ "cipherfs-core",
+ "hex",
+ "rand",
+ "tempfile",
+ "windows",
  "winfsp",
  "winfsp-sys",
- "zeroize",
 ]
 
 [[package]]

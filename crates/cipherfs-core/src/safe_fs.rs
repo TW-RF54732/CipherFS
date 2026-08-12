@@ -30,7 +30,12 @@ pub struct PendingFile {
 }
 
 impl SafeRoot {
+    #[cfg(test)]
     pub fn open_new(target: &Path) -> Result<Self> {
+        Self::open_new_at(target, None)
+    }
+
+    pub fn open_new_at(target: &Path, requested_staging: Option<&Path>) -> Result<Self> {
         if fs::symlink_metadata(target).is_ok() {
             anyhow::bail!(
                 "Extraction destination already exists; choose a path that does not exist: {}",
@@ -54,7 +59,28 @@ impl SafeRoot {
             anyhow::bail!("Extraction destination was created concurrently");
         }
 
-        let staging_name = allocate_staging_name(&parent, target_name)?;
+        let staging_name = if let Some(requested) = requested_staging {
+            let requested_absolute: PathBuf =
+                std::path::absolute(requested)?.components().collect();
+            anyhow::ensure!(
+                requested_absolute.parent() == absolute.parent(),
+                "Extraction staging directory must be a sibling of the destination"
+            );
+            anyhow::ensure!(
+                requested_absolute != absolute,
+                "Extraction staging directory must differ from the destination"
+            );
+            let requested_name = requested_absolute
+                .file_name()
+                .context("Extraction staging path must name a directory")?;
+            anyhow::ensure!(
+                parent.symlink_metadata(requested_name).is_err(),
+                "Extraction staging directory already exists"
+            );
+            requested_name.to_os_string()
+        } else {
+            allocate_staging_name(&parent, target_name)?
+        };
         parent
             .create_dir(&staging_name)
             .context("Unable to create extraction staging directory")?;
@@ -134,7 +160,14 @@ impl SafeRoot {
         })
     }
 
-    pub fn commit(mut self) -> Result<()> {
+    pub fn staging_path(&self) -> PathBuf {
+        self.target_display
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(&self.staging_name)
+    }
+
+    pub fn commit(mut self) -> Result<Option<String>> {
         sync_open_directories(&self.directories)?;
         self.directories.clear();
         rename_directory_no_replace(
@@ -145,10 +178,9 @@ impl SafeRoot {
         )
         .with_context(|| format!("Unable to install {}", self.target_display.display()))?;
         self.committed = true;
-        if let Err(error) = sync_cap_directory(&self.parent) {
-            eprintln!("[Warning] Unable to sync extraction parent after commit: {error:#}");
-        }
-        Ok(())
+        Ok(sync_cap_directory(&self.parent)
+            .err()
+            .map(|error| format!("Unable to sync extraction parent after commit: {error:#}")))
     }
 }
 

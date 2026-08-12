@@ -56,8 +56,16 @@ jobs:
       - name: Static checks
         run: |
           cargo fmt --check
-          cargo clippy --locked --all-targets -- -D warnings
-          cargo test --locked
+          cargo check --locked --workspace --all-targets
+          cargo clippy --locked --workspace --all-targets -- -D warnings
+          cargo test --locked --workspace
+          for package in cipherfs-core cipherfs-fuse cipherfs-winfsp cipherfs-update cipherfs-cli cipherfs-windows-shell; do
+            cargo check --locked -p "$package"
+          done
+          if cargo tree --locked -p cipherfs-core | grep -E 'clap|rpassword|indicatif|reqwest|self-replace|fuser|winfsp'; then
+            echo 'cipherfs-core contains a forbidden frontend, network, mount, or UI dependency' >&2
+            exit 1
+          fi
 
       - name: Build static release
         run: cargo build --locked --release --target x86_64-unknown-linux-musl
@@ -97,19 +105,28 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
 
-      - name: Static checks and release build without WinFsp runtime
+      - name: Workspace checks and release build without WinFsp runtime
         run: |
           cargo fmt --check
           .\scripts\generate-third-party.ps1
           git diff --exit-code -- THIRD_PARTY_DEPENDENCIES.md
-          cargo clippy --locked --all-targets --target x86_64-pc-windows-msvc -- -D warnings
-          $env:CIPHERFS_EXPECT_WINFSP_MISSING = '1'
-          cargo test --locked --target x86_64-pc-windows-msvc -- --test-threads=1
-          Remove-Item Env:CIPHERFS_EXPECT_WINFSP_MISSING
-          cargo build --locked --release --target x86_64-pc-windows-msvc
+          cargo check --locked --workspace --all-targets --target x86_64-pc-windows-msvc
+          cargo clippy --locked --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings
+          @('cipherfs-core', 'cipherfs-fuse', 'cipherfs-winfsp', 'cipherfs-update', 'cipherfs-cli', 'cipherfs-windows-shell') | ForEach-Object {
+            cargo check --locked -p $_ --target x86_64-pc-windows-msvc
+            if ($LASTEXITCODE -ne 0) { throw "Independent crate check failed: $_" }
+          }
+          $coreTree = cargo tree --locked -p cipherfs-core --target x86_64-pc-windows-msvc
+          if (($coreTree -join "`n") -match 'clap|rpassword|indicatif|reqwest|self-replace|fuser|winfsp') {
+            throw 'cipherfs-core contains a forbidden frontend, network, mount, or UI dependency'
+          }
+          cargo test --locked --workspace --exclude cipherfs-winfsp --target x86_64-pc-windows-msvc -- --test-threads=1
+          cargo build --locked --release --target x86_64-pc-windows-msvc -p cipherfs-cli -p cipherfs-windows-shell
           .\target\x86_64-pc-windows-msvc\release\cipherfs.exe --help
           .\target\x86_64-pc-windows-msvc\release\cipherfs.exe --version
           .\target\x86_64-pc-windows-msvc\release\cipherfs.exe licenses | Select-String 'GNU GENERAL PUBLIC LICENSE'
+          .\target\x86_64-pc-windows-msvc\release\cipherfs-shell.exe --headless-smoke
+          .\target\x86_64-pc-windows-msvc\release\cipherfs-shell.exe --winfsp-runtime-missing-smoke
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
           $vs = & $vswhere -latest -property installationPath
           $dumpbin = Get-ChildItem "$vs\VC\Tools\MSVC" -Recurse -Filter dumpbin.exe |
@@ -118,7 +135,11 @@ jobs:
           if (-not $dumpbin) { throw 'dumpbin.exe not found' }
           $imports = & $dumpbin.FullName /imports .\target\x86_64-pc-windows-msvc\release\cipherfs.exe
           if (($imports -join "`n") -notmatch 'winfsp-x64.dll') {
-            throw 'WinFsp delay-load import is missing'
+            throw 'CLI WinFsp delay-load import is missing'
+          }
+          $shellImports = & $dumpbin.FullName /imports .\target\x86_64-pc-windows-msvc\release\cipherfs-shell.exe
+          if (($shellImports -join "`n") -notmatch 'winfsp-x64.dll') {
+            throw 'Shell WinFsp delay-load import is missing'
           }
 
       - name: Install pinned WinFsp runtime and development files
@@ -135,15 +156,19 @@ jobs:
 
       - name: WinFsp runtime E2E
         run: |
+          $env:PATH = "${env:ProgramFiles(x86)}\WinFsp\bin;$env:PATH"
           $env:CIPHERFS_WINFSP_E2E = '1'
           $env:CIPHERFS_WINFSP_FOLDER_E2E = '1'
-          cargo test --locked --release --target x86_64-pc-windows-msvc winfsp_mount::tests:: -- --test-threads=1 --nocapture
+          cargo test --locked --release -p cipherfs-winfsp --target x86_64-pc-windows-msvc tests:: -- --test-threads=1 --nocapture
+          cargo test --locked --release -p cipherfs-windows-shell --target x86_64-pc-windows-msvc worker_mount_session_auto_drive_and_unmount -- --test-threads=1 --nocapture
 
       - name: Upload tested Windows binary
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cipherfs-windows-amd64
-          path: target/x86_64-pc-windows-msvc/release/cipherfs.exe
+          path: |
+            target/x86_64-pc-windows-msvc/release/cipherfs.exe
+            target/x86_64-pc-windows-msvc/release/cipherfs-shell.exe
           if-no-files-found: error
 
   release:
@@ -198,23 +223,31 @@ jobs:
           windows_digest="$(sha256sum release/cipherfs.exe | cut -d' ' -f1)"
           printf 'version=%s\ntarget=x86_64-pc-windows-msvc\nasset=cipherfs.exe\nsize=%s\nsha256=%s\n' \
             "${version}" "${windows_size}" "${windows_digest}" > release/cipherfs-windows-amd64.manifest
+          shell_size="$(stat -c '%s' release/cipherfs-shell.exe)"
+          shell_digest="$(sha256sum release/cipherfs-shell.exe | cut -d' ' -f1)"
+          printf 'version=%s\ntarget=x86_64-pc-windows-msvc\ncli_asset=cipherfs.exe\ncli_size=%s\ncli_sha256=%s\nshell_asset=cipherfs-shell.exe\nshell_size=%s\nshell_sha256=%s\n' \
+            "${version}" "${windows_size}" "${windows_digest}" "${shell_size}" "${shell_digest}" > release/cipherfs-windows-integration.manifest
           printf '%s' "${MINISIGN_SECRET_KEY}" > release/minisign.key
           chmod 600 release/minisign.key
           trap 'rm -f release/minisign.key' EXIT
           minisign -S -W -s release/minisign.key -m release/cipherfs-linux-amd64.manifest
           minisign -S -W -s release/minisign.key -m release/cipherfs-windows-amd64.manifest
+          minisign -S -W -s release/minisign.key -m release/cipherfs-windows-integration.manifest
           minisign -Vm release/cipherfs-linux-amd64.manifest \
             -x release/cipherfs-linux-amd64.manifest.minisig \
             -P "${CIPHERFS_MINISIGN_PUBLIC_KEY}"
           minisign -Vm release/cipherfs-windows-amd64.manifest \
             -x release/cipherfs-windows-amd64.manifest.minisig \
             -P "${CIPHERFS_MINISIGN_PUBLIC_KEY}"
+          minisign -Vm release/cipherfs-windows-integration.manifest \
+            -x release/cipherfs-windows-integration.manifest.minisig \
+            -P "${CIPHERFS_MINISIGN_PUBLIC_KEY}"
           cp LICENSE LICENSE-GPL-3.0 THIRD_PARTY_NOTICES.md THIRD_PARTY_DEPENDENCIES.md VENDORED_WINFSP.md release/
           git archive --format=tar.gz --prefix="cipherfs-${version}/" -o "release/cipherfs-${version}-source.tar.gz" HEAD
           tar -C release -czf release/cipherfs-linux-amd64.tar.gz cipherfs LICENSE LICENSE-GPL-3.0 THIRD_PARTY_NOTICES.md THIRD_PARTY_DEPENDENCIES.md
-          (cd release && zip cipherfs-windows-amd64.zip cipherfs.exe LICENSE LICENSE-GPL-3.0 THIRD_PARTY_NOTICES.md THIRD_PARTY_DEPENDENCIES.md VENDORED_WINFSP.md)
+          (cd release && zip cipherfs-windows-amd64.zip cipherfs.exe cipherfs-shell.exe LICENSE LICENSE-GPL-3.0 THIRD_PARTY_NOTICES.md THIRD_PARTY_DEPENDENCIES.md VENDORED_WINFSP.md)
           (cd release && sha256sum cipherfs cipherfs-linux-amd64.tar.gz > cipherfs-linux-amd64.sha256)
-          (cd release && sha256sum cipherfs.exe cipherfs-windows-amd64.zip > cipherfs-windows-amd64.sha256)
+          (cd release && sha256sum cipherfs.exe cipherfs-shell.exe cipherfs-windows-amd64.zip > cipherfs-windows-amd64.sha256)
           tar -tzf release/cipherfs-linux-amd64.tar.gz | grep -Fx LICENSE-GPL-3.0
           unzip -l release/cipherfs-windows-amd64.zip | grep -F LICENSE-GPL-3.0
 
@@ -227,11 +260,14 @@ jobs:
             release/cipherfs-linux-amd64.manifest
             release/cipherfs-linux-amd64.sha256
             release/cipherfs.exe
+            release/cipherfs-shell.exe
             release/cipherfs-windows-amd64.zip
             release/cipherfs-windows-amd64.manifest
             release/cipherfs-windows-amd64.sha256
+            release/cipherfs-windows-integration.manifest
             release/cipherfs-linux-amd64.manifest.minisig
             release/cipherfs-windows-amd64.manifest.minisig
+            release/cipherfs-windows-integration.manifest.minisig
             release/LICENSE
             release/LICENSE-GPL-3.0
             release/THIRD_PARTY_NOTICES.md
@@ -252,10 +288,13 @@ jobs:
             release/cipherfs-linux-amd64.manifest.minisig
             release/cipherfs-linux-amd64.sha256
             release/cipherfs.exe
+            release/cipherfs-shell.exe
             release/cipherfs-windows-amd64.zip
             release/cipherfs-windows-amd64.manifest
             release/cipherfs-windows-amd64.manifest.minisig
             release/cipherfs-windows-amd64.sha256
+            release/cipherfs-windows-integration.manifest
+            release/cipherfs-windows-integration.manifest.minisig
             release/LICENSE
             release/LICENSE-GPL-3.0
             release/THIRD_PARTY_NOTICES.md

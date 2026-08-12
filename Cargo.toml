@@ -1,18 +1,36 @@
-[package]
-name = "cipherfs"
-version = "3.0.0"
+[workspace]
+members = [
+    "crates/cipherfs-core",
+    "crates/cipherfs-fuse",
+    "crates/cipherfs-winfsp",
+    "crates/cipherfs-update",
+    "apps/cipherfs-cli",
+    "apps/cipherfs-windows-shell",
+]
+default-members = [
+    "crates/cipherfs-core",
+    "crates/cipherfs-update",
+    "apps/cipherfs-cli",
+]
+resolver = "3"
+
+[workspace.package]
+version = "3.1.0-beta"
 edition = "2024"
 license = "MIT"
 
-[dependencies]
+[workspace.dependencies]
 anyhow = "1.0.103"
 argon2 = "0.5.3"
 blake3 = "1.8.5"
+cap-std = "4.0.2"
 chacha20poly1305 = "0.10.1"
 clap = { version = "4.6.1", features = ["derive"] }
-hkdf = "0.12.4"
+ctrlc = "3.5.1"
 hex = "0.4.3"
+hkdf = "0.12.4"
 indicatif = "0.18.4"
+libc = "0.2.186"
 minisign-verify = "0.2.5"
 parking_lot = "0.12.5"
 rand = "0.10.1"
@@ -23,36 +41,11 @@ rpassword = "7.5.2"
 semver = "1.0.28"
 serde = { version = "1.0.228", features = ["derive"] }
 serde-big-array = "0.5.1"
-sha2 = "0.10.9"
 self-replace = "1.5.0"
+sha2 = "0.10.9"
+tempfile = "3.27.0"
 walkdir = "2.5.0"
 zeroize = { version = "1.8.2", features = ["derive"] }
-cap-std = "4.0.2"
-ctrlc = "3.5.1"
-
-[target.'cfg(unix)'.dependencies]
-fuser = { version = "0.17.0", default-features = false }
-libc = "0.2.186"
-
-[target.'cfg(windows)'.dependencies]
-winfsp = "0.13.0"
-winfsp-sys = "0.12.1"
-windows = { version = "0.61.3", features = [
-    "Win32_Foundation",
-    "Win32_Globalization",
-    "Win32_Security",
-    "Win32_Security_Authorization",
-    "Win32_Storage_FileSystem",
-    "Win32_System_Registry",
-    "Win32_System_LibraryLoader",
-    "Win32_System_Threading",
-] }
-
-[target.'cfg(windows)'.build-dependencies]
-winfsp = "0.13.0"
 
 [patch.crates-io]
 winfsp-sys = { path = "vendor/winfsp-sys" }
-
-[dev-dependencies]
-tempfile = "3.27.0"

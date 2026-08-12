@@ -4,9 +4,7 @@ use reqwest::blocking::Client;
 use semver::Version;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use std::fs::OpenOptions;
-use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::io::Read;
 use std::time::Duration;
 
 const OWNER: &str = "TW-RF54732";
@@ -27,6 +25,10 @@ const TARGET: &str = "x86_64-pc-windows-msvc";
 const BINARY_ASSET: &str = "cipherfs";
 #[cfg(windows)]
 const BINARY_ASSET: &str = "cipherfs.exe";
+#[cfg(windows)]
+const INTEGRATION_MANIFEST_ASSET: &str = "cipherfs-windows-integration.manifest";
+#[cfg(windows)]
+const INTEGRATION_SIGNATURE_ASSET: &str = "cipherfs-windows-integration.manifest.minisig";
 
 #[derive(Deserialize)]
 struct GithubRelease {
@@ -50,15 +52,39 @@ struct Manifest {
     sha256: String,
 }
 
-struct TempDownload(PathBuf);
-
-impl Drop for TempDownload {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
-    }
+/// Both Windows binaries from a single signed integration manifest. This is
+/// intentionally separate from the legacy one-binary updater manifest so an
+/// already-released v3.0.0 portable CLI remains compatible.
+#[cfg(windows)]
+pub struct VerifiedWindowsIntegration {
+    pub version: String,
+    pub cli: VerifiedBinary,
+    pub shell: VerifiedBinary,
 }
 
-pub fn update_interactive() -> Result<()> {
+#[cfg(windows)]
+pub struct VerifiedBinary {
+    pub bytes: Vec<u8>,
+}
+
+#[cfg(windows)]
+struct IntegrationManifest {
+    version: Version,
+    target: String,
+    cli: Manifest,
+    shell: Manifest,
+}
+
+pub struct VerifiedPortableUpdate {
+    pub version: String,
+    pub current_version: String,
+    pub release_notes: Option<String>,
+    pub bytes: Vec<u8>,
+}
+
+/// Download and authenticate a portable update without choosing presentation
+/// or replacement policy. `None` means the current version is up to date.
+pub fn download_portable_update() -> Result<Option<VerifiedPortableUpdate>> {
     let public_key_b64 = option_env!("CIPHERFS_MINISIGN_PUBLIC_KEY").unwrap_or("");
     if public_key_b64.is_empty() {
         anyhow::bail!(
@@ -81,8 +107,7 @@ pub fn update_interactive() -> Result<()> {
         .context("Latest release tag is not a semantic version")?;
     let current = Version::parse(env!("CARGO_PKG_VERSION"))?;
     if latest <= current {
-        println!("[Info] Already up to date (Version: {current}).");
-        return Ok(());
+        return Ok(None);
     }
 
     let manifest_url = asset_url(&release, MANIFEST_ASSET)?;
@@ -96,78 +121,75 @@ pub fn update_interactive() -> Result<()> {
     let manifest = parse_manifest(manifest_text)?;
     validate_manifest_for_update(&manifest, &latest, &current, TARGET, BINARY_ASSET)?;
 
-    println!(
-        "[Info] Signed update available: {} (Current: {})",
-        latest, current
-    );
-    if let Some(body) = release.body.as_deref() {
-        println!(
-            "--- Release Notes ---\n{}\n---------------------",
-            terminal_safe(body)
-        );
-    }
-    print!("Install verified update {latest}? [y/N]: ");
-    std::io::stdout().flush()?;
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-    if !input.trim().eq_ignore_ascii_case("y") {
-        println!("[Info] Update cancelled.");
-        return Ok(());
-    }
-
     let binary_url = asset_url(&release, &manifest.asset)?;
     let binary = download(&client, binary_url)?;
     validate_downloaded_binary(&binary, &manifest)?;
-
-    let current_exe = std::env::current_exe()?;
-    let parent = current_exe
-        .parent()
-        .context("Current executable has no parent directory")?;
-    let mut random = [0u8; 8];
-    rand::Rng::fill_bytes(&mut rand::rng(), &mut random);
-    let temp_path = parent.join(format!(
-        ".cipherfs-update-{}{}",
-        hex::encode(random),
-        std::env::consts::EXE_SUFFIX
-    ));
-    let temp = TempDownload(temp_path.clone());
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temp_path)?;
-    file.write_all(&binary)?;
-    file.sync_all()?;
-    drop(file);
-    set_executable(&temp_path)?;
-    std::fs::File::open(&temp_path)?.sync_all()?;
-    self_replace::self_replace(&temp_path)?;
-    sync_parent(parent)?;
-    drop(temp);
-    println!("[Success] Updated to {latest}.");
-    Ok(())
+    Ok(Some(VerifiedPortableUpdate {
+        version: latest.to_string(),
+        current_version: current.to_string(),
+        release_notes: release.body,
+        bytes: binary,
+    }))
 }
 
-#[cfg(unix)]
-fn set_executable(path: &std::path::Path) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))?;
-    Ok(())
-}
-
+/// Download two Windows executables only after a dedicated Minisign-signed
+/// manifest verifies their names, sizes and SHA-256 digests.
 #[cfg(windows)]
-fn set_executable(_path: &std::path::Path) -> Result<()> {
-    Ok(())
-}
-
-#[cfg(unix)]
-fn sync_parent(path: &std::path::Path) -> Result<()> {
-    std::fs::File::open(path)?.sync_all()?;
-    Ok(())
-}
-
-#[cfg(windows)]
-fn sync_parent(_path: &std::path::Path) -> Result<()> {
-    Ok(())
+pub fn download_windows_integration() -> Result<VerifiedWindowsIntegration> {
+    let public_key_b64 = option_env!("CIPHERFS_MINISIGN_PUBLIC_KEY").unwrap_or("");
+    if public_key_b64.is_empty() {
+        anyhow::bail!(
+            "This build has no trusted update signing key; download releases manually from GitHub"
+        )
+    }
+    let client = Client::builder()
+        .user_agent(format!("cipherfs-shell/{}", env!("CARGO_PKG_VERSION")))
+        .connect_timeout(Duration::from_secs(15))
+        .timeout(Duration::from_secs(120))
+        .build()?;
+    let release: GithubRelease = client
+        .get(format!(
+            "https://api.github.com/repos/{OWNER}/{REPOSITORY}/releases/latest"
+        ))
+        .send()?
+        .error_for_status()?
+        .json()?;
+    let latest = Version::parse(release.tag_name.trim_start_matches('v'))
+        .context("Latest release tag is not a semantic version")?;
+    let current = Version::parse(env!("CARGO_PKG_VERSION"))?;
+    if latest <= current {
+        anyhow::bail!("Already up to date")
+    }
+    let manifest_bytes = download(&client, asset_url(&release, INTEGRATION_MANIFEST_ASSET)?)?;
+    let signature = String::from_utf8(download(
+        &client,
+        asset_url(&release, INTEGRATION_SIGNATURE_ASSET)?,
+    )?)
+    .context("Integration manifest signature is not UTF-8")?;
+    verify_manifest_signature(public_key_b64, &manifest_bytes, &signature)?;
+    let manifest = parse_integration_manifest(
+        std::str::from_utf8(&manifest_bytes).context("Integration manifest is not UTF-8")?,
+    )?;
+    if manifest.version != latest || manifest.target != TARGET {
+        anyhow::bail!("Signed integration manifest does not match the latest Windows release")
+    }
+    validate_manifest_for_update(&manifest.cli, &latest, &current, TARGET, "cipherfs.exe")?;
+    validate_manifest_for_update(
+        &manifest.shell,
+        &latest,
+        &current,
+        TARGET,
+        "cipherfs-shell.exe",
+    )?;
+    let cli = download(&client, asset_url(&release, &manifest.cli.asset)?)?;
+    let shell = download(&client, asset_url(&release, &manifest.shell.asset)?)?;
+    validate_downloaded_binary(&cli, &manifest.cli)?;
+    validate_downloaded_binary(&shell, &manifest.shell)?;
+    Ok(VerifiedWindowsIntegration {
+        version: latest.to_string(),
+        cli: VerifiedBinary { bytes: cli },
+        shell: VerifiedBinary { bytes: shell },
+    })
 }
 
 fn verify_manifest_signature(trusted_keys: &str, manifest: &[u8], signature: &str) -> Result<()> {
@@ -184,12 +206,6 @@ fn verify_manifest_signature(trusted_keys: &str, manifest: &[u8], signature: &st
         }
     }
     anyhow::bail!("Update manifest signature verification failed")
-}
-
-fn terminal_safe(text: &str) -> String {
-    text.chars()
-        .filter(|character| *character == '\n' || *character == '\t' || !character.is_control())
-        .collect()
 }
 
 fn asset_url<'a>(release: &'a GithubRelease, name: &str) -> Result<&'a str> {
@@ -260,6 +276,67 @@ fn parse_manifest(text: &str) -> Result<Manifest> {
             .context("Manifest has no size")?
             .parse()?,
         sha256,
+    })
+}
+
+#[cfg(windows)]
+fn parse_integration_manifest(text: &str) -> Result<IntegrationManifest> {
+    let mut values = std::collections::HashMap::new();
+    for line in text.lines() {
+        let (key, value) = line
+            .split_once('=')
+            .context("Malformed signed integration manifest")?;
+        if values.insert(key, value).is_some() {
+            anyhow::bail!("Duplicate field in signed integration manifest");
+        }
+    }
+    if values.len() != 8 {
+        anyhow::bail!("Unexpected fields in signed integration manifest");
+    }
+    let version = Version::parse(
+        values
+            .remove("version")
+            .context("Integration manifest has no version")?,
+    )?;
+    let target = values
+        .remove("target")
+        .context("Integration manifest has no target")?
+        .to_string();
+    let mut binary = |prefix: &str| -> Result<Manifest> {
+        let asset_key = format!("{prefix}_asset");
+        let size_key = format!("{prefix}_size");
+        let digest_key = format!("{prefix}_sha256");
+        let asset = values
+            .remove(asset_key.as_str())
+            .context("Integration manifest has no asset")?
+            .to_string();
+        let size = values
+            .remove(size_key.as_str())
+            .context("Integration manifest has no size")?
+            .parse()?;
+        let sha256 = values
+            .remove(digest_key.as_str())
+            .context("Integration manifest has no sha256")?
+            .to_string();
+        if sha256.len() != 64 || !sha256.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            anyhow::bail!("Integration manifest sha256 is invalid")
+        }
+        Ok(Manifest {
+            version: version.clone(),
+            target: target.clone(),
+            asset,
+            size,
+            sha256,
+        })
+    };
+    let cli = binary("cli")?;
+    let shell = binary("shell")?;
+    debug_assert!(values.is_empty());
+    Ok(IntegrationManifest {
+        version,
+        target,
+        cli,
+        shell,
     })
 }
 
@@ -368,11 +445,6 @@ mod tests {
     }
 
     #[test]
-    fn release_notes_cannot_emit_terminal_control_sequences() {
-        assert_eq!(terminal_safe("safe\u{1b}[31m\nnext"), "safe[31m\nnext");
-    }
-
-    #[test]
     fn truncated_and_modified_downloads_are_rejected() {
         let complete = b"complete release binary";
         let manifest = Manifest {
@@ -387,6 +459,25 @@ mod tests {
         let mut modified = complete.to_vec();
         modified[0] ^= 1;
         assert!(validate_downloaded_binary(&modified, &manifest).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn integration_manifest_requires_exact_binary_metadata() {
+        let text = concat!(
+            "version=3.1.0\n",
+            "target=x86_64-pc-windows-msvc\n",
+            "cli_asset=cipherfs.exe\n",
+            "cli_size=12\n",
+            "cli_sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+            "shell_asset=cipherfs-shell.exe\n",
+            "shell_size=13\n",
+            "shell_sha256=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n"
+        );
+        let parsed = parse_integration_manifest(text).unwrap();
+        assert_eq!(parsed.cli.asset, "cipherfs.exe");
+        assert_eq!(parsed.shell.size, 13);
+        assert!(parse_integration_manifest(&format!("{text}extra=value\n")).is_err());
     }
 
     #[test]
@@ -431,7 +522,7 @@ mod tests {
         let status = std::process::Command::new(&runner)
             .args([
                 "--exact",
-                "updater::tests::windows_self_replace_child",
+                "tests::windows_self_replace_child",
                 "--nocapture",
             ])
             .env("CIPHERFS_SELF_REPLACE_SOURCE", &replacement)

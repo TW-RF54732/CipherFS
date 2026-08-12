@@ -1,6 +1,8 @@
+#![cfg(windows)]
+
 use anyhow::{Context, Result};
 use std::ffi::c_void;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use windows::Win32::Foundation::{
     CloseHandle, HANDLE, HLOCAL, LocalFree, STATUS_BUFFER_TOO_SMALL, STATUS_DATA_ERROR,
     STATUS_FILE_IS_A_DIRECTORY, STATUS_MEDIA_WRITE_PROTECTED, STATUS_NOT_A_DIRECTORY,
@@ -13,7 +15,9 @@ use windows::Win32::Security::{
     GetSecurityDescriptorLength, GetTokenInformation, PSECURITY_DESCRIPTOR, TOKEN_QUERY,
     TOKEN_USER, TokenUser,
 };
-use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_READONLY};
+use windows::Win32::Storage::FileSystem::{
+    FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_READONLY, GetLogicalDrives,
+};
 use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 use windows::core::{HSTRING, PCWSTR, PWSTR};
 use winfsp::U16CStr;
@@ -21,13 +25,18 @@ use winfsp::filesystem::{
     DirInfo, DirMarker, FileInfo, FileSecurity, FileSystemContext, ModificationDescriptor,
     OpenFileInfo, VolumeInfo, WideNameInfo,
 };
-use winfsp::host::{FileSystemHost, MountPoint, VolumeParams};
+use winfsp::host::{FileSystemHost, VolumeParams};
 use winfsp_sys::{FILE_ACCESS_RIGHTS, FILE_FLAGS_AND_ATTRIBUTES};
 
-use crate::readonly_fs::{FsError, FsErrorKind, Node, NodeKind, ReadOnlyFs};
-use crate::windows_names::{WindowsNameMap, compare_display_names, equivalent};
-use crate::winfsp_mountpoint::prepare as prepare_directory_mountpoint;
-use crate::winfsp_runtime::initialize as initialize_winfsp;
+mod mountpoint;
+mod runtime;
+
+use cipherfs_core::{
+    FsError, FsErrorKind, Node, NodeKind, ReadOnlyFs, WindowsNameMap, compare_display_names,
+    equivalent,
+};
+use mountpoint::{PreparedDirectoryMountpoint, prepare as prepare_directory_mountpoint};
+use runtime::initialize as initialize_winfsp;
 
 pub struct WinFspCipherFs {
     core: ReadOnlyFs,
@@ -54,7 +63,6 @@ impl WinFspCipherFs {
             cursor += 1;
         }
         let names = WindowsNameMap::new(&nodes);
-        names.warn();
         let security_descriptor = read_only_security_descriptor()?;
         Ok(Self {
             core,
@@ -299,40 +307,128 @@ impl FileSystemContext for WinFspCipherFs {
     }
 }
 
-pub fn mount(
-    container: &Path,
-    mountpoint: &Path,
-    password: &str,
-    cache_mib: u64,
-    wait: impl FnOnce(),
-) -> Result<()> {
-    let _init = initialize_winfsp()?;
-    println!("[Info] WinFsp - Windows File System Proxy, Copyright (C) Bill Zissimopoulos.");
-    println!("[Info] https://github.com/winfsp/winfsp");
-    println!("[Info] Run `cipherfs licenses` for licensing and no-warranty notices.");
-    let filesystem = WinFspCipherFs::open(container, password, cache_mib)?;
-    let params = volume_params();
-    let mut host: FileSystemHost<WinFspCipherFs> =
-        FileSystemHost::new(params, filesystem).context("Unable to create WinFsp host")?;
-    host.start().context("Unable to start WinFsp dispatcher")?;
-    let prepared_directory = prepare_directory_mountpoint(mountpoint)?;
-    if mountpoint.to_string_lossy().eq_ignore_ascii_case("auto") {
-        host.mount(MountPoint::NextFreeDrive)
-            .context("Unable to select a free drive letter")?;
-    } else if let Some(prepared) = &prepared_directory {
-        host.mount(&prepared.mount_path)
-            .context("Unable to mount WinFsp filesystem at the directory")?;
-    } else {
-        host.mount(&mountpoint.as_os_str())
-            .context("Unable to mount WinFsp filesystem")?;
-    }
-    println!("[Success] CipherFS is mounted read-only through WinFsp.");
-    println!("[Info] Press Ctrl+C to unmount.");
-    wait();
-    println!("\n[Info] Unmounting...");
-    host.unmount();
-    host.stop();
+/// Owns a running WinFsp filesystem. Dropping the session always detaches the
+/// mount and releases the directory-mountpoint guard.
+pub struct WinFspMountSession {
+    _init: winfsp::FspInit,
+    host: FileSystemHost<WinFspCipherFs>,
+    _prepared_directory: Option<PreparedDirectoryMountpoint>,
+    mount_path: PathBuf,
+    unmounted: bool,
+}
+
+/// Probe the optional WinFsp runtime without opening a container or selecting a
+/// mountpoint. Final binaries use this for pre-install delay-load smoke tests.
+pub fn check_runtime() -> Result<()> {
+    let _ = initialize_winfsp()?;
     Ok(())
+}
+
+impl WinFspMountSession {
+    pub fn start(
+        container: &Path,
+        mountpoint: &Path,
+        password: &str,
+        cache_mib: u64,
+    ) -> Result<Self> {
+        let init = initialize_winfsp()?;
+        let filesystem = WinFspCipherFs::open(container, password, cache_mib)?;
+        let mut host: FileSystemHost<WinFspCipherFs> =
+            FileSystemHost::new(volume_params(), filesystem)
+                .context("Unable to create WinFsp host")?;
+        host.start().context("Unable to start WinFsp dispatcher")?;
+
+        let automatic = mountpoint.to_string_lossy().eq_ignore_ascii_case("auto");
+        let mount_path = if automatic {
+            PathBuf::new()
+        } else {
+            mountpoint.to_path_buf()
+        };
+        let prepared_directory = if automatic {
+            None
+        } else {
+            match prepare_directory_mountpoint(&mount_path) {
+                Ok(value) => value,
+                Err(error) => {
+                    host.stop();
+                    return Err(error);
+                }
+            }
+        };
+        let mounted_path = if automatic {
+            let mut mounted = None;
+            let mut last_error = None;
+            for candidate in auto_drive_candidates() {
+                match host.mount(&candidate.as_os_str()) {
+                    Ok(()) => {
+                        mounted = Some(candidate);
+                        break;
+                    }
+                    Err(error) => last_error = Some(error),
+                }
+            }
+            match mounted {
+                Some(path) => Ok(path),
+                None => Err(last_error
+                    .map(anyhow::Error::from)
+                    .unwrap_or_else(|| anyhow::anyhow!("No free drive letters are available")))
+                .context("Unable to select a free drive letter"),
+            }
+        } else if let Some(prepared) = &prepared_directory {
+            host.mount(&prepared.mount_path)
+                .context("Unable to mount WinFsp filesystem at the directory")
+                .map(|_| mount_path.clone())
+        } else {
+            host.mount(&mount_path.as_os_str())
+                .context("Unable to mount WinFsp filesystem")
+                .map(|_| mount_path.clone())
+        };
+        let mount_path = match mounted_path {
+            Ok(path) => path,
+            Err(error) => {
+                host.stop();
+                return Err(error);
+            }
+        };
+
+        Ok(Self {
+            _init: init,
+            host,
+            _prepared_directory: prepared_directory,
+            mount_path,
+            unmounted: false,
+        })
+    }
+
+    pub fn mount_path(&self) -> &Path {
+        &self.mount_path
+    }
+
+    pub fn unmount(&mut self) {
+        if !self.unmounted {
+            self.host.unmount();
+            self.host.stop();
+            self.unmounted = true;
+        }
+    }
+}
+
+impl Drop for WinFspMountSession {
+    fn drop(&mut self) {
+        self.unmount();
+    }
+}
+
+fn auto_drive_candidates() -> impl Iterator<Item = PathBuf> {
+    let occupied = unsafe { GetLogicalDrives() };
+    (3u32..26).rev().filter_map(move |index| {
+        if occupied & (1 << index) != 0 {
+            None
+        } else {
+            let letter = char::from_u32(u32::from(b'A') + index).expect("ASCII drive letter");
+            Some(PathBuf::from(format!("{letter}:")))
+        }
+    })
 }
 
 fn volume_params() -> VolumeParams {
@@ -418,10 +514,7 @@ fn map_error(error: FsError) -> winfsp::FspError {
         FsErrorKind::NotFound => STATUS_OBJECT_NAME_NOT_FOUND.into(),
         FsErrorKind::NotDirectory => STATUS_NOT_A_DIRECTORY.into(),
         FsErrorKind::IsDirectory => STATUS_FILE_IS_A_DIRECTORY.into(),
-        FsErrorKind::Integrity => {
-            eprintln!("[Integrity] {error}");
-            STATUS_DATA_ERROR.into()
-        }
+        FsErrorKind::Integrity => STATUS_DATA_ERROR.into(),
     }
 }
 
@@ -429,13 +522,37 @@ fn map_error(error: FsError) -> winfsp::FspError {
 mod tests {
     use super::*;
     use rand::Rng;
+    use winfsp::host::MountPoint;
 
-    const CRASH_TEST_NAME: &str = "winfsp_mount::tests::hard_termination_folder_mount_recovers";
+    const CRASH_TEST_NAME: &str = "tests::hard_termination_folder_mount_recovers";
 
     fn random_test_password() -> String {
         let mut value = [0u8; 32];
         rand::rng().fill_bytes(&mut value);
         hex::encode(value)
+    }
+
+    fn pack_test(source: &Path, container: &Path, password: &str, threads: usize) {
+        let cancellation = cipherfs_core::operation::CancellationToken::default();
+        let reporter = cipherfs_core::operation::NoProgress;
+        cipherfs_core::pack(
+            cipherfs_core::PackRequest {
+                source,
+                output: container,
+                password,
+                duress_password: None,
+                options: cipherfs_core::PackOptions {
+                    argon2_m_cost: cipherfs_core::MIN_ARGON_MEMORY_KIB,
+                    argon2_t_cost: 1,
+                    argon2_p_cost: 1,
+                    max_index_size: cipherfs_core::MAX_INDEX_SIZE,
+                    threads,
+                    temporary_path: None,
+                },
+            },
+            cipherfs_core::operation::OperationControl::new(&cancellation, &reporter),
+        )
+        .unwrap();
     }
 
     #[test]
@@ -499,18 +616,7 @@ mod tests {
         let password = random_test_password();
         std::fs::create_dir(&source).unwrap();
         std::fs::write(source.join("file.txt"), b"recovery").unwrap();
-        crate::pack::pack(
-            &source,
-            &container,
-            &password,
-            None,
-            crate::v2::MIN_ARGON_MEMORY_KIB,
-            1,
-            1,
-            crate::v2::MAX_INDEX_SIZE,
-            1,
-        )
-        .unwrap();
+        pack_test(&source, &container, &password, 1);
 
         let status = std::process::Command::new(std::env::current_exe().unwrap())
             .args([CRASH_TEST_NAME, "--exact", "--nocapture"])
@@ -568,20 +674,9 @@ mod tests {
         std::fs::create_dir_all(source.join("empty")).unwrap();
         std::fs::create_dir(&mountpoint).unwrap();
         std::fs::write(source.join("small.txt"), b"private data").unwrap();
-        let boundary = vec![0x5au8; crate::v2::CHUNK_SIZE + 17];
+        let boundary = vec![0x5au8; cipherfs_core::CHUNK_SIZE + 17];
         std::fs::write(source.join("boundary.bin"), &boundary).unwrap();
-        crate::pack::pack(
-            &source,
-            &container,
-            &password,
-            None,
-            crate::v2::MIN_ARGON_MEMORY_KIB,
-            1,
-            1,
-            crate::v2::MAX_INDEX_SIZE,
-            2,
-        )
-        .unwrap();
+        pack_test(&source, &container, &password, 2);
 
         if std::env::var_os("CIPHERFS_WINFSP_FOLDER_E2E").is_some() {
             let filesystem = WinFspCipherFs::open(&container, &password, 8).unwrap();
@@ -676,10 +771,9 @@ mod tests {
             .unwrap();
         let last = container_file.metadata().unwrap().len() - 1;
         let mut byte = [0u8; 1];
-        crate::platform_io::PlatformFileExt::read_exact_at(&container_file, &mut byte, last)
-            .unwrap();
+        cipherfs_core::PlatformFileExt::read_exact_at(&container_file, &mut byte, last).unwrap();
         byte[0] ^= 1;
-        crate::platform_io::PlatformFileExt::write_all_at(&container_file, &byte, last).unwrap();
+        cipherfs_core::PlatformFileExt::write_all_at(&container_file, &byte, last).unwrap();
         container_file.sync_all().unwrap();
 
         let corrupt_occupied = unsafe { windows::Win32::Storage::FileSystem::GetLogicalDrives() };

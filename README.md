@@ -75,8 +75,9 @@ flowchart LR
 ## Project Status
 
 - Experimental and developed as a side project.
-- v3.0.0 is the first release with supported Linux and Windows release gates;
-  the project status remains experimental rather than security-audited.
+- v3.1.0-beta is the first prerelease with the workspace-separated core,
+  platform adapters, CLI, updater, and optional Windows Shell frontend. The
+  project status remains experimental rather than security-audited.
 - Testing covers v2 pack, verify, atomic extract, FUSE and WinFsp read-only
   mounts, corruption failure, and signed release metadata. This does not
   establish security, data-recovery, or performance guarantees.
@@ -119,7 +120,7 @@ snapshots, SSD remapping, and previously recovered keys can defeat it.
 ## Container Compatibility
 
 - New containers are always written in the CipherFS v2 format.
-- CipherFS v3.0.0 supports only v2 containers. Every command rejects v1 before
+- CipherFS v3.1.0-beta supports only v2 containers. Every command rejects v1 before
   prompting for a password or allocating container-controlled resources.
 - Existing v2 containers remain compatible; the v2 on-disk format is unchanged.
 - Dropping the v1 reader is an intentional breaking compatibility change, so
@@ -130,7 +131,7 @@ snapshots, SSD remapping, and previously recovered keys can defeat it.
 
 There is no v1 reader in the stable binary. To migrate a trusted v1 container,
 use the archived `v2.2.0-beta.1` (or an earlier compatible release) to extract
-it, then pack that directory with v3.0.0. Never use the legacy reader for an
+it, then pack that directory with v3.1.0-beta. Never use the legacy reader for an
 untrusted container.
 
 ## Installation
@@ -154,11 +155,41 @@ chmod +x cipherfs
 Release binaries are provided for convenience and remain subject to the same
 experimental status and limitations described above.
 
+### Windows Explorer Integration
+
+The Windows ZIP contains the portable `cipherfs.exe` CLI and the optional
+`cipherfs-shell.exe` native shell frontend. Run `cipherfs-shell.exe` and choose
+**Install Windows integration** to copy both executables to the current user's
+`%LOCALAPPDATA%\Programs\CipherFS` directory. No administrator rights, service,
+driver installation, or MSIX package is used.
+
+It registers an Open With handler for `.cfs` and a **Pack with CipherFS**
+folder verb. Windows 11 shows the folder verb under **Show more options**;
+CipherFS deliberately does not install a COM Explorer extension. The installer
+does not modify Windows `UserChoice` defaults. Run the shell frontend again to
+repair, update, or uninstall this integration.
+
+Double-clicking a `.cfs` file opens a small native action dialog. Mount creates
+an automatic read-only WinFsp drive and keeps it mounted only while its dialog
+is open. Pack, Extract, Verify and Change Password use the same v2 core as the
+CLI; Verify still requires a password because it authenticates the full
+encrypted container.
+
 ### Build from Source
 
 ```bash
 cargo build --locked --release
 ```
+
+This builds the platform CLI from `cipherfs-cli`. On Windows, build the native
+Explorer frontend explicitly with:
+
+```powershell
+cargo build --locked --release -p cipherfs-windows-shell
+```
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for crate boundaries and the isolated
+Windows operation-worker protocol.
 
 The repository pins the Rust toolchain. Linux release artifacts target
 `x86_64-unknown-linux-musl`; Windows artifacts target
@@ -257,6 +288,14 @@ key intentionally disable automatic replacement.
 Windows releases are portable and may trigger SmartScreen because CipherFS does
 not currently have an Authenticode certificate. Release manifests remain
 Minisign-signed and include SHA-256 hashes.
+
+Managed Windows integration updates are opt-in. They download and verify a
+separate Minisign-signed manifest containing the names, sizes and SHA-256
+digests of both Windows executables. The portable CLI continues to use its
+original single-binary update manifest. The current managed installer/updater
+is isolated in the Windows shell crate, but cross-process locking and fully
+transactional replacement/rollback remain deferred work; do not update while
+CipherFS operations or mounts are active.
 
 CipherFS stores file contents, names and directory structure. It does not
 preserve platform ACLs, ownership, timestamps, xattrs, alternate data streams,

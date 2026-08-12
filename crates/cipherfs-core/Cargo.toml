@@ -1,0 +1,36 @@
+[package]
+name = "cipherfs-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+argon2.workspace = true
+blake3.workspace = true
+cap-std.workspace = true
+chacha20poly1305.workspace = true
+hex.workspace = true
+hkdf.workspace = true
+parking_lot.workspace = true
+rand.workspace = true
+rayon.workspace = true
+rmp-serde.workspace = true
+serde.workspace = true
+serde-big-array.workspace = true
+sha2.workspace = true
+walkdir.workspace = true
+zeroize.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61.3", features = [
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_Storage_FileSystem",
+] }
+
+[dev-dependencies]
+tempfile.workspace = true
