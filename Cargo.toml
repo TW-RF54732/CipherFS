@@ -24,7 +24,7 @@ anyhow = "1.0.103"
 argon2 = "0.5.3"
 blake3 = "1.8.5"
 cap-std = "4.0.2"
-chacha20poly1305 = "0.10.1"
+chacha20poly1305 = "0.11.0"
 clap = { version = "4.6.1", features = ["derive"] }
 ctrlc = "3.5.1"
 hex = "0.4.3"
