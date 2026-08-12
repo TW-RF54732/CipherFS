@@ -33,7 +33,7 @@ pub fn install() -> Result<()> {
     copy_replace(&cli_source, &cli_target)?;
     copy_replace(&current, &shell_target)?;
     register_shell(&shell_target)?;
-    crate::dialogs::info("CipherFS", "Windows integration installed for this user.")
+    Ok(())
 }
 
 pub fn uninstall() -> Result<()> {
@@ -45,22 +45,23 @@ pub fn uninstall() -> Result<()> {
         let _ = std::fs::remove_file(&cli);
         self_replace::self_delete_outside_path(&root)
             .context("Unable to schedule removal of the managed CipherFS installation")?;
-        crate::dialogs::info(
-            "CipherFS",
-            "Explorer integration was removed. CipherFS files will be removed after this window closes.",
-        )
+        Ok(())
     } else {
         let _ = std::fs::remove_file(&cli);
         let _ = std::fs::remove_file(root.join("cipherfs-shell.exe"));
         let _ = std::fs::remove_dir(&root);
-        crate::dialogs::info(
-            "CipherFS",
-            "Explorer integration and managed CipherFS files were removed.",
-        )
+        Ok(())
     }
 }
 
-pub fn update() -> Result<()> {
+pub struct PreparedUpdate {
+    pub version: semver::Version,
+    helper: PathBuf,
+    cli: PathBuf,
+    shell: PathBuf,
+}
+
+pub fn prepare_update() -> Result<PreparedUpdate> {
     let root = install_root()?;
     let current = std::env::current_exe()?;
     anyhow::ensure!(
@@ -71,20 +72,27 @@ pub fn update() -> Result<()> {
     let stage = stage_release(&root, &release.cli.bytes, &release.shell.bytes)?;
     let helper = stage.join("cipherfs-shell-helper.exe");
     std::fs::copy(&current, &helper).context("Unable to create update helper")?;
+    Ok(PreparedUpdate {
+        version: release
+            .version
+            .parse()
+            .context("Verified update version is invalid")?,
+        helper,
+        cli: stage.join("cipherfs.exe"),
+        shell: stage.join("cipherfs-shell.exe"),
+    })
+}
+
+pub fn launch_prepared_update(update: PreparedUpdate) -> Result<()> {
     let pid = std::process::id().to_string();
-    let cli = stage.join("cipherfs.exe").display().to_string();
-    let shell = stage.join("cipherfs-shell.exe").display().to_string();
-    std::process::Command::new(&helper)
-        .args(["--apply-update", &pid, &cli, &shell])
+    std::process::Command::new(&update.helper)
+        .args(["--apply-update"])
+        .arg(pid)
+        .arg(update.cli)
+        .arg(update.shell)
         .spawn()
         .context("Unable to launch update helper")?;
-    crate::dialogs::info(
-        "CipherFS",
-        &format!(
-            "Verified CipherFS {} will install after this window closes.",
-            release.version
-        ),
-    )
+    Ok(())
 }
 
 pub fn apply_staged_update(mut args: impl Iterator<Item = OsString>) -> Result<()> {

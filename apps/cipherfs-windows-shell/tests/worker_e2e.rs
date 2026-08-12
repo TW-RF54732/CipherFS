@@ -33,6 +33,44 @@ fn pack_request(source: &Path, output: &Path, temporary: &Path) -> WorkerRequest
     }
 }
 
+fn pack_fixture(source: &Path, container: &Path, password: &str) {
+    let cancellation = cipherfs_core::operation::CancellationToken::default();
+    let reporter = cipherfs_core::operation::NoProgress;
+    cipherfs_core::pack(
+        cipherfs_core::PackRequest {
+            source,
+            output: container,
+            password,
+            duress_password: None,
+            options: cipherfs_core::PackOptions {
+                argon2_m_cost: cipherfs_core::MIN_ARGON_MEMORY_KIB,
+                argon2_t_cost: 1,
+                argon2_p_cost: 1,
+                threads: 1,
+                ..Default::default()
+            },
+        },
+        cipherfs_core::operation::OperationControl::new(&cancellation, &reporter),
+    )
+    .unwrap();
+}
+
+fn run_request(request: WorkerRequest) -> (Vec<WorkerEvent>, std::process::ExitStatus) {
+    let (mut child, mut input, mut output) = spawn();
+    write_frame(&mut input, &request).unwrap();
+    let mut events = Vec::new();
+    while let Some(event) = read_frame::<_, WorkerEvent>(&mut output).unwrap() {
+        let terminal = matches!(event, WorkerEvent::Succeeded | WorkerEvent::Failed { .. });
+        events.push(event);
+        if terminal {
+            break;
+        }
+    }
+    drop(input);
+    let status = child.wait().unwrap();
+    (events, status)
+}
+
 fn read_terminal(output: &mut ChildStdout) -> (Vec<(Phase, u64)>, WorkerEvent) {
     let mut progress = Vec::new();
     loop {
@@ -77,6 +115,142 @@ fn worker_pack_reports_monotonic_progress_and_commits() {
             .any(|(phase, _)| *phase == Phase::SelfVerify)
     );
     assert!(!progress.iter().any(|(phase, _)| *phase == Phase::Verify));
+}
+
+#[test]
+fn worker_extract_round_trip_reports_commit_and_cleans_staging() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source");
+    let container = temp.path().join("vault.cfs");
+    let output = temp.path().join("output");
+    let staging = temp.path().join(".extract.stage");
+    std::fs::create_dir_all(source.join("empty")).unwrap();
+    std::fs::write(source.join("data.bin"), vec![0x5a; 1024 * 1024 + 17]).unwrap();
+    pack_fixture(&source, &container, "extract-password");
+    let (events, status) = run_request(WorkerRequest {
+        version: PROTOCOL_VERSION,
+        operation: WorkerOperation::Extract {
+            container,
+            output: output.clone(),
+            staging: staging.clone(),
+            password: Secret::new("extract-password"),
+        },
+    });
+    assert!(status.success());
+    assert!(matches!(events.last(), Some(WorkerEvent::Succeeded)));
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, WorkerEvent::CommitStarted))
+    );
+    assert_eq!(
+        std::fs::read(output.join("data.bin")).unwrap(),
+        vec![0x5a; 1024 * 1024 + 17]
+    );
+    assert!(output.join("empty").is_dir());
+    assert!(!staging.exists());
+}
+
+#[test]
+fn worker_extract_rejects_wrong_password_corruption_and_existing_destination() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source");
+    let container = temp.path().join("vault.cfs");
+    std::fs::create_dir(&source).unwrap();
+    std::fs::write(source.join("data.bin"), b"secret").unwrap();
+    pack_fixture(&source, &container, "right-password");
+
+    for (name, password, precreate, corrupt) in [
+        ("wrong", "wrong-password", false, false),
+        ("existing", "right-password", true, false),
+        ("corrupt", "right-password", false, true),
+    ] {
+        let case_container = temp.path().join(format!("{name}.cfs"));
+        std::fs::copy(&container, &case_container).unwrap();
+        if corrupt {
+            use std::io::{Seek, SeekFrom, Write};
+            let mut file = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&case_container)
+                .unwrap();
+            file.seek(SeekFrom::End(-1)).unwrap();
+            file.write_all(&[0]).unwrap();
+        }
+        let output = temp.path().join(format!("{name}-output"));
+        let staging = temp.path().join(format!(".{name}.stage"));
+        if precreate {
+            std::fs::create_dir(&output).unwrap();
+        }
+        let (events, _) = run_request(WorkerRequest {
+            version: PROTOCOL_VERSION,
+            operation: WorkerOperation::Extract {
+                container: case_container,
+                output: output.clone(),
+                staging: staging.clone(),
+                password: Secret::new(password),
+            },
+        });
+        assert!(
+            matches!(events.last(), Some(WorkerEvent::Failed { .. })),
+            "{name}"
+        );
+        assert_eq!(output.exists(), precreate, "{name}");
+        assert!(!staging.exists(), "{name}");
+    }
+}
+
+#[test]
+fn worker_verify_and_password_change_cover_success_and_failure() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source");
+    let container = temp.path().join("vault.cfs");
+    std::fs::create_dir(&source).unwrap();
+    std::fs::write(source.join("data.bin"), b"secret").unwrap();
+    pack_fixture(&source, &container, "old-password");
+
+    for password in ["old-password", "wrong-password"] {
+        let (events, _) = run_request(WorkerRequest {
+            version: PROTOCOL_VERSION,
+            operation: WorkerOperation::Verify {
+                container: container.clone(),
+                password: Secret::new(password),
+            },
+        });
+        assert_eq!(
+            matches!(events.last(), Some(WorkerEvent::Succeeded)),
+            password == "old-password"
+        );
+    }
+
+    let (events, status) = run_request(WorkerRequest {
+        version: PROTOCOL_VERSION,
+        operation: WorkerOperation::ChangePassword {
+            container: container.clone(),
+            old_password: Secret::new("old-password"),
+            new_password: Secret::new("new-password"),
+        },
+    });
+    assert!(status.success());
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, WorkerEvent::MutationStarted))
+    );
+    assert!(matches!(events.last(), Some(WorkerEvent::Succeeded)));
+    for (password, succeeds) in [("old-password", false), ("new-password", true)] {
+        let (events, _) = run_request(WorkerRequest {
+            version: PROTOCOL_VERSION,
+            operation: WorkerOperation::Verify {
+                container: container.clone(),
+                password: Secret::new(password),
+            },
+        });
+        assert_eq!(
+            matches!(events.last(), Some(WorkerEvent::Succeeded)),
+            succeeds
+        );
+    }
 }
 
 #[test]
@@ -189,10 +363,8 @@ fn unknown_protocol_version_exits_without_echoing_password() {
 }
 
 #[test]
+#[ignore = "requires the pinned WinFsp runtime and a free drive letter"]
 fn worker_mount_session_auto_drive_and_unmount() {
-    if std::env::var_os("CIPHERFS_WINFSP_E2E").is_none() {
-        return;
-    }
     let temp = tempfile::tempdir().unwrap();
     let source = temp.path().join("source");
     let container = temp.path().join("vault.cfs");

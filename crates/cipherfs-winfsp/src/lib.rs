@@ -577,10 +577,8 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires the pinned WinFsp runtime"]
     fn hard_termination_folder_mount_recovers() {
-        if std::env::var_os("CIPHERFS_WINFSP_E2E").is_none() {
-            return;
-        }
         if std::env::var_os("CIPHERFS_WINFSP_CRASH_CHILD").is_some() {
             let container = std::path::PathBuf::from(
                 std::env::var_os("CIPHERFS_WINFSP_CRASH_CONTAINER").unwrap(),
@@ -619,7 +617,7 @@ mod tests {
         pack_test(&source, &container, &password, 1);
 
         let status = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([CRASH_TEST_NAME, "--exact", "--nocapture"])
+            .args([CRASH_TEST_NAME, "--exact", "--ignored", "--nocapture"])
             .env("CIPHERFS_WINFSP_CRASH_CHILD", "1")
             .env("CIPHERFS_WINFSP_CRASH_CONTAINER", &container)
             .env("CIPHERFS_WINFSP_CRASH_MOUNTPOINT", &mountpoint)
@@ -659,12 +657,9 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires the pinned WinFsp runtime"]
     #[allow(clippy::permissions_set_readonly_false)]
     fn runtime_mount_reads_files_and_rejects_mutation() {
-        if std::env::var_os("CIPHERFS_WINFSP_E2E").is_none() {
-            return;
-        }
-
         let _init = initialize_winfsp().expect("WinFsp runtime must be installed for E2E");
         let temp = tempfile::tempdir().unwrap();
         let source = temp.path().join("source");

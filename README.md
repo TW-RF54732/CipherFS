@@ -75,7 +75,7 @@ flowchart LR
 ## Project Status
 
 - Experimental and developed as a side project.
-- v3.1.0-beta is the first prerelease with the workspace-separated core,
+- v3.1.0 is the first stable release with the workspace-separated core,
   platform adapters, CLI, updater, and optional Windows Shell frontend. The
   project status remains experimental rather than security-audited.
 - Testing covers v2 pack, verify, atomic extract, FUSE and WinFsp read-only
@@ -120,7 +120,7 @@ snapshots, SSD remapping, and previously recovered keys can defeat it.
 ## Container Compatibility
 
 - New containers are always written in the CipherFS v2 format.
-- CipherFS v3.1.0-beta supports only v2 containers. Every command rejects v1 before
+- CipherFS v3.1.0 supports only v2 containers. Every command rejects v1 before
   prompting for a password or allocating container-controlled resources.
 - Existing v2 containers remain compatible; the v2 on-disk format is unchanged.
 - Dropping the v1 reader is an intentional breaking compatibility change, so
@@ -131,7 +131,7 @@ snapshots, SSD remapping, and previously recovered keys can defeat it.
 
 There is no v1 reader in the stable binary. To migrate a trusted v1 container,
 use the archived `v2.2.0-beta.1` (or an earlier compatible release) to extract
-it, then pack that directory with v3.1.0-beta. Never use the legacy reader for an
+it, then pack that directory with v3.1.0. Never use the legacy reader for an
 untrusted container.
 
 ## Installation
@@ -169,11 +169,18 @@ CipherFS deliberately does not install a COM Explorer extension. The installer
 does not modify Windows `UserChoice` defaults. Run the shell frontend again to
 repair, update, or uninstall this integration.
 
-Double-clicking a `.cfs` file opens a small native action dialog. Mount creates
-an automatic read-only WinFsp drive and keeps it mounted only while its dialog
-is open. Pack, Extract, Verify and Change Password use the same v2 core as the
-CLI; Verify still requires a password because it authenticates the full
-encrypted container.
+Double-clicking a `.cfs` file opens a dark, custom Slint interface. CipherFS
+prompts, progress, cancellation, mount status and errors use one Slint window;
+Windows continues to provide file pickers, Explorer launching and shell verbs.
+Mount creates an automatic read-only WinFsp drive and keeps it mounted while
+its window is open. Pack, Extract, Verify and Change Password use the same v2
+core as the CLI; Verify still requires a password because it authenticates the
+full encrypted container.
+
+Passwords entered in the Slint interface are moved into zeroizing operation
+secrets and the visible fields are cleared immediately on submission. Slint may
+internally create framework-managed string copies, so CipherFS does not claim
+that every GUI password-memory copy can be overwritten deterministically.
 
 ### Build from Source
 

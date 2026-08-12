@@ -29,3 +29,6 @@ cipherfs-winfsp = { path = "../../crates/cipherfs-winfsp" }
 
 [target.'cfg(windows)'.build-dependencies]
 winfsp = "0.13.0"
+
+[dev-dependencies]
+tempfile.workspace = true

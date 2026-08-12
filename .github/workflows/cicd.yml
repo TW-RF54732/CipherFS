@@ -120,13 +120,41 @@ jobs:
           if (($coreTree -join "`n") -match 'clap|rpassword|indicatif|reqwest|self-replace|fuser|winfsp') {
             throw 'cipherfs-core contains a forbidden frontend, network, mount, or UI dependency'
           }
+          $cliTree = cargo tree --locked -p cipherfs-cli --target x86_64-pc-windows-msvc
+          if (($coreTree + $cliTree -join "`n") -match 'slint|winit|femtovg|glutin|glow') {
+            throw 'CipherFS core or CLI contains a Slint/rendering dependency'
+          }
           cargo test --locked --workspace --exclude cipherfs-winfsp --target x86_64-pc-windows-msvc -- --test-threads=1
           cargo build --locked --release --target x86_64-pc-windows-msvc -p cipherfs-cli -p cipherfs-windows-shell
           .\target\x86_64-pc-windows-msvc\release\cipherfs.exe --help
           .\target\x86_64-pc-windows-msvc\release\cipherfs.exe --version
           .\target\x86_64-pc-windows-msvc\release\cipherfs.exe licenses | Select-String 'GNU GENERAL PUBLIC LICENSE'
-          .\target\x86_64-pc-windows-msvc\release\cipherfs-shell.exe --headless-smoke
-          .\target\x86_64-pc-windows-msvc\release\cipherfs-shell.exe --winfsp-runtime-missing-smoke
+          function Invoke-ShellSmoke([string]$Name, [string[]]$SmokeArguments) {
+            $errorFile = Join-Path $env:RUNNER_TEMP 'cipherfs-shell-smoke-error.txt'
+            Remove-Item -LiteralPath $errorFile -ErrorAction SilentlyContinue
+            $env:CIPHERFS_SMOKE_ERROR_FILE = $errorFile
+            try {
+              $process = Start-Process .\target\x86_64-pc-windows-msvc\release\cipherfs-shell.exe -ArgumentList $SmokeArguments -PassThru
+              if (-not $process.WaitForExit(20000)) {
+                Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+                throw "$Name timed out after 20 seconds (PID $($process.Id))"
+              }
+              if ($process.ExitCode -ne 0) {
+                $detail = if (Test-Path -LiteralPath $errorFile) { (Get-Content -LiteralPath $errorFile) -join "`n" } else { 'No child error report was written.' }
+                throw "$Name failed: $($process.ExitCode): $detail"
+              }
+            } finally {
+              Remove-Item Env:CIPHERFS_SMOKE_ERROR_FILE -ErrorAction SilentlyContinue
+              Remove-Item -LiteralPath $errorFile -ErrorAction SilentlyContinue
+            }
+          }
+          Invoke-ShellSmoke 'Default renderer smoke' @('--headless-smoke')
+          $env:SLINT_BACKEND = 'winit-software'
+          Invoke-ShellSmoke 'Software renderer smoke' @('--headless-smoke')
+          Remove-Item Env:SLINT_BACKEND
+          Invoke-ShellSmoke 'Extract native dialog smoke' @('--native-dialog-smoke', 'extract')
+          Invoke-ShellSmoke 'Pack native dialog smoke' @('--native-dialog-smoke', 'pack')
+          Invoke-ShellSmoke 'WinFsp missing-runtime smoke' @('--winfsp-runtime-missing-smoke')
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
           $vs = & $vswhere -latest -property installationPath
           $dumpbin = Get-ChildItem "$vs\VC\Tools\MSVC" -Recurse -Filter dumpbin.exe |
@@ -159,8 +187,9 @@ jobs:
           $env:PATH = "${env:ProgramFiles(x86)}\WinFsp\bin;$env:PATH"
           $env:CIPHERFS_WINFSP_E2E = '1'
           $env:CIPHERFS_WINFSP_FOLDER_E2E = '1'
-          cargo test --locked --release -p cipherfs-winfsp --target x86_64-pc-windows-msvc tests:: -- --test-threads=1 --nocapture
-          cargo test --locked --release -p cipherfs-windows-shell --target x86_64-pc-windows-msvc worker_mount_session_auto_drive_and_unmount -- --test-threads=1 --nocapture
+          cargo test --locked --release -p cipherfs-winfsp --target x86_64-pc-windows-msvc hard_termination_folder_mount_recovers -- --ignored --test-threads=1 --nocapture
+          cargo test --locked --release -p cipherfs-winfsp --target x86_64-pc-windows-msvc runtime_mount_reads_files_and_rejects_mutation -- --ignored --test-threads=1 --nocapture
+          cargo test --locked --release -p cipherfs-windows-shell --target x86_64-pc-windows-msvc worker_mount_session_auto_drive_and_unmount -- --ignored --test-threads=1 --nocapture
 
       - name: Upload tested Windows binary
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

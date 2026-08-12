@@ -6,9 +6,11 @@ targets = [
 
 [advisories]
 # winfsp 0.13 currently depends on paste 1.0.15. RUSTSEC-2024-0436 marks
-# paste unmaintained, not vulnerable. Re-evaluate this exact exception whenever
-# winfsp is updated; no other advisory is accepted.
-ignore = ["RUSTSEC-2024-0436"]
+# paste is introduced by winfsp. Slint 1.17.1's rendering stack introduces the
+# exact rustybuzz and ttf-parser releases below; all three advisories describe
+# unmaintained crates rather than known vulnerabilities. Re-evaluate every one
+# when either pinned frontend dependency is updated.
+ignore = ["RUSTSEC-2024-0436", "RUSTSEC-2026-0192", "RUSTSEC-2026-0206"]
 
 [licenses]
 confidence-threshold = 0.8
@@ -21,6 +23,7 @@ allow = [
     "CC0-1.0",
     "CDLA-Permissive-2.0",
     "GPL-3.0",
+    "GPL-3.0-only",
     "ISC",
     "MIT",
     "Unicode-3.0",

@@ -173,14 +173,35 @@ fn parse_threads(value: &str) -> std::result::Result<usize, String> {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    match cli.command {
+    execute_command(cli.command, &mut TerminalIo)
+}
+
+trait CliIo {
+    fn password(&mut self, prompt: &str) -> Result<Zeroizing<String>>;
+    fn output(&mut self, message: String);
+}
+
+struct TerminalIo;
+
+impl CliIo for TerminalIo {
+    fn password(&mut self, prompt: &str) -> Result<Zeroizing<String>> {
+        Ok(Zeroizing::new(rpassword::prompt_password(prompt)?))
+    }
+
+    fn output(&mut self, message: String) {
+        println!("{message}");
+    }
+}
+
+fn execute_command(command: Commands, io: &mut dyn CliIo) -> Result<()> {
+    match command {
         Commands::Update => update_interactive(),
         Commands::Licenses => {
-            println!("{}", include_str!("../../../THIRD_PARTY_NOTICES.md"));
-            println!("\n--- Locked Rust dependencies ---\n");
-            println!("{}", include_str!("../../../THIRD_PARTY_DEPENDENCIES.md"));
-            println!("\n--- GNU GPL version 3 ---\n");
-            println!("{}", include_str!("../../../LICENSE-GPL-3.0"));
+            io.output(include_str!("../../../THIRD_PARTY_NOTICES.md").into());
+            io.output("\n--- Locked Rust dependencies ---\n".into());
+            io.output(include_str!("../../../THIRD_PARTY_DEPENDENCIES.md").into());
+            io.output("\n--- GNU GPL version 3 ---\n".into());
+            io.output(include_str!("../../../LICENSE-GPL-3.0").into());
             Ok(())
         }
         Commands::Pack {
@@ -199,19 +220,17 @@ fn main() -> Result<()> {
                     .map(|name| PathBuf::from(format!("{name}.cfs")))
                     .unwrap_or_else(|| PathBuf::from("vault.cfs"))
             });
-            let password = Zeroizing::new(rpassword::prompt_password("Set Master Password: ")?);
-            let verify = Zeroizing::new(rpassword::prompt_password("Verify Master Password: ")?);
+            let password = io.password("Set Master Password: ")?;
+            let verify = io.password("Verify Master Password: ")?;
             if password.as_str() != verify.as_str() {
                 anyhow::bail!("Passwords do not match");
             }
-            let duress = Zeroizing::new(rpassword::prompt_password(
-                "Set Duress Password (optional): ",
-            )?);
+            let duress = io.password("Set Duress Password (optional): ")?;
             let duress = (!duress.is_empty()).then_some(duress.as_str());
             let max_index_size = max_index
                 .checked_mul(1024 * 1024)
                 .context("Index limit overflow")?;
-            println!("[Info] Scanning {}...", source.display());
+            io.output(format!("[Info] Scanning {}...", source.display()));
             let cancellation = operation_token()?;
             let reporter = CliProgress::new();
             cipherfs_core::pack(
@@ -232,7 +251,10 @@ fn main() -> Result<()> {
                 OperationControl::new(cancellation, &reporter),
             )?;
             reporter.finish_active();
-            println!("[Success] {} created and verified.", output.display());
+            io.output(format!(
+                "[Success] {} created and verified.",
+                output.display()
+            ));
             Ok(())
         }
         Commands::Extract {
@@ -241,7 +263,7 @@ fn main() -> Result<()> {
             threads,
         } => {
             require_v2(&container)?;
-            let password = Zeroizing::new(rpassword::prompt_password("Enter Password: ")?);
+            let password = io.password("Enter Password: ")?;
             let cancellation = operation_token()?;
             let reporter = CliProgress::new();
             cipherfs_core::extract(
@@ -257,7 +279,7 @@ fn main() -> Result<()> {
                 OperationControl::new(cancellation, &reporter),
             )?;
             reporter.finish_active();
-            println!("[Success] Extraction complete.");
+            io.output("[Success] Extraction complete.".into());
             Ok(())
         }
         Commands::Mount {
@@ -266,15 +288,14 @@ fn main() -> Result<()> {
             cache_mib,
         } => {
             require_v2(&container)?;
-            let password = Zeroizing::new(rpassword::prompt_password("Enter Password: ")?);
+            let password = io.password("Enter Password: ")?;
             mount_filesystem(&container, &mountpoint, &password, cache_mib)
         }
         Commands::Passwd { container } => {
             require_v2(&container)?;
-            let old = Zeroizing::new(rpassword::prompt_password("Enter Current Password: ")?);
-            let new = Zeroizing::new(rpassword::prompt_password("Set New Master Password: ")?);
-            let verify =
-                Zeroizing::new(rpassword::prompt_password("Verify New Master Password: ")?);
+            let old = io.password("Enter Current Password: ")?;
+            let new = io.password("Set New Master Password: ")?;
+            let verify = io.password("Verify New Master Password: ")?;
             if new.as_str() != verify.as_str() {
                 anyhow::bail!("Passwords do not match");
             }
@@ -287,12 +308,12 @@ fn main() -> Result<()> {
                 cancellation,
                 &reporter,
             )?;
-            println!("[Success] Password keyslot updated.");
+            io.output("[Success] Password keyslot updated.".into());
             Ok(())
         }
         Commands::Verify { container, threads } => {
             require_v2(&container)?;
-            let password = Zeroizing::new(rpassword::prompt_password("Enter Password: ")?);
+            let password = io.password("Enter Password: ")?;
             let cancellation = operation_token()?;
             let reporter = CliProgress::new();
             cipherfs_core::verify(
@@ -304,7 +325,7 @@ fn main() -> Result<()> {
                 OperationControl::new(cancellation, &reporter),
             )?;
             reporter.finish_active();
-            println!("[Success] Header, index, and all encrypted chunks are valid.");
+            io.output("[Success] Header, index, and all encrypted chunks are valid.".into());
             Ok(())
         }
     }
@@ -471,9 +492,130 @@ fn sync_parent(_path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::VecDeque;
+
+    struct FakeIo {
+        passwords: VecDeque<String>,
+        output: Vec<String>,
+    }
+
+    impl FakeIo {
+        fn new(values: &[&str]) -> Self {
+            Self {
+                passwords: values.iter().map(|value| (*value).to_string()).collect(),
+                output: Vec::new(),
+            }
+        }
+    }
+
+    impl CliIo for FakeIo {
+        fn password(&mut self, _prompt: &str) -> Result<Zeroizing<String>> {
+            Ok(Zeroizing::new(
+                self.passwords
+                    .pop_front()
+                    .context("missing fake password")?,
+            ))
+        }
+
+        fn output(&mut self, message: String) {
+            self.output.push(message);
+        }
+    }
 
     #[test]
     fn release_notes_strip_terminal_controls() {
         assert_eq!(terminal_safe("ok\u{1b}[31m\nnext"), "ok[31m\nnext");
+    }
+
+    #[test]
+    fn injected_io_drives_pack_verify_extract_and_password_change() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let container = temp.path().join("vault.cfs");
+        let extracted = temp.path().join("extracted");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(source.join("secret.txt"), b"cli round trip").unwrap();
+
+        execute_command(
+            Commands::Pack {
+                source: source.clone(),
+                output: Some(container.clone()),
+                m_cost: cipherfs_core::MIN_ARGON_MEMORY_KIB,
+                t_cost: 1,
+                p_cost: 1,
+                max_index: 8,
+                threads: 1,
+            },
+            &mut FakeIo::new(&["old-password", "old-password", ""]),
+        )
+        .unwrap();
+        execute_command(
+            Commands::Verify {
+                container: container.clone(),
+                threads: 1,
+            },
+            &mut FakeIo::new(&["old-password"]),
+        )
+        .unwrap();
+        execute_command(
+            Commands::Extract {
+                container: container.clone(),
+                output: extracted.clone(),
+                threads: 1,
+            },
+            &mut FakeIo::new(&["old-password"]),
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read(extracted.join("secret.txt")).unwrap(),
+            b"cli round trip"
+        );
+
+        execute_command(
+            Commands::Passwd {
+                container: container.clone(),
+            },
+            &mut FakeIo::new(&["old-password", "new-password", "new-password"]),
+        )
+        .unwrap();
+        assert!(
+            execute_command(
+                Commands::Verify {
+                    container: container.clone(),
+                    threads: 1,
+                },
+                &mut FakeIo::new(&["old-password"]),
+            )
+            .is_err()
+        );
+        execute_command(
+            Commands::Verify {
+                container,
+                threads: 1,
+            },
+            &mut FakeIo::new(&["new-password"]),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn injected_io_exposes_validation_errors_without_terminal_input() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        std::fs::create_dir(&source).unwrap();
+        let error = execute_command(
+            Commands::Pack {
+                source,
+                output: Some(temp.path().join("vault.cfs")),
+                m_cost: cipherfs_core::MIN_ARGON_MEMORY_KIB,
+                t_cost: 1,
+                p_cost: 1,
+                max_index: 8,
+                threads: 1,
+            },
+            &mut FakeIo::new(&["one", "two", ""]),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("Passwords do not match"));
     }
 }

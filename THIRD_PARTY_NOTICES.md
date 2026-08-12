@@ -4,6 +4,10 @@ CipherFS source written by the CipherFS contributors is available under the
 MIT License in `LICENSE`.
 
 The Windows build uses `winfsp-rs`, which is licensed under GNU GPL version 3.
+A distributed `cipherfs-shell.exe` also uses Slint under its GPL-3.0-only
+option. Slint is Copyright SixtyFPS GmbH and contributors; source is available
+from <https://github.com/slint-ui/slint> at the exact version recorded in
+`Cargo.lock` and `THIRD_PARTY_DEPENDENCIES.md`.
 A distributed Windows executable containing that dependency is conveyed under
 the GPLv3 requirements for the combined work. The corresponding source is the
 exact tagged repository source archive, its `Cargo.lock`, the vendored binding

@@ -1,12 +1,15 @@
 #![cfg(windows)]
 
 mod app;
+mod controller;
 mod dialogs;
 mod integration;
 mod mount_controller;
 mod operation_controller;
 pub mod protocol;
 mod worker;
+
+slint::include_modules!();
 
 pub fn run_application() -> anyhow::Result<()> {
     app::run()
@@ -16,8 +19,12 @@ pub fn run_operation_worker() -> anyhow::Result<()> {
     worker::run_stdio()
 }
 
-pub fn show_error(text: &str) {
-    dialogs::show_error(text);
+pub fn headless_smoke() -> anyhow::Result<()> {
+    app::headless_smoke()
+}
+
+pub fn native_dialog_smoke(kind: &str) -> anyhow::Result<()> {
+    app::native_dialog_smoke(kind)
 }
 
 pub fn verify_winfsp_is_missing() -> anyhow::Result<()> {

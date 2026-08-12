@@ -26,8 +26,11 @@ container format and the `cipherfs` command-line contract remain at version
   choose terminal, GUI, or replacement behavior.
 - `cipherfs-cli` owns Clap, password prompts, terminal progress, Ctrl+C, and
   portable self-replacement. It selects FUSE on Unix and WinFsp on Windows.
-- `cipherfs-windows-shell` owns native dialogs, Explorer/Registry integration,
-  managed-update presentation, and isolated operation workers.
+- `cipherfs-windows-shell` owns a Slint-rendered single-window frontend,
+  Windows file pickers, Explorer/Registry integration, managed-update
+  presentation, and isolated operation workers. CipherFS-owned prompts,
+  progress, results and errors are Slint views; Windows owns only file pickers,
+  Explorer launching, Registry verbs, shell notifications and the title bar.
 
 WinFsp delay-load linker policy belongs only to the final Windows CLI and shell
 build scripts. The adapter crate does not impose linker policy on consumers.
@@ -61,6 +64,12 @@ terminates only the worker. The parent may clean only the 128-bit-random exact
 sibling artifact recorded in its request. Commit and password-mutation zones
 disable cancellation. A mount worker owns the WinFsp RAII session until an
 Unmount command or pipe teardown.
+
+The Slint event loop remains on the main thread. Operation, mount and update
+controllers run blocking work off-thread and post typed state changes back to
+that event loop. Password fields are cleared immediately after conversion to
+zeroizing worker secrets. Slint-managed strings may have framework-owned
+copies, so the frontend does not claim complete password-memory erasure.
 
 ## Deferred boundary
 

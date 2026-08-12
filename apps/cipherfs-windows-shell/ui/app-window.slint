@@ -1,0 +1,186 @@
+import { LineEdit, ScrollView } from "std-widgets.slint";
+
+component ActionButton inherits Rectangle {
+        in property <string> label;
+        in property <bool> enabled: true;
+        callback clicked;
+        height: 42px;
+        border-radius: 7px;
+        background: enabled ? (touch.pressed ? #1f6feb : touch.has-hover ? #438ef8 : #2f81f7) : #263241;
+        accessible-role: button;
+        accessible-label: label;
+        accessible-enabled: enabled;
+        accessible-action-default => { if (enabled) { root.clicked(); } }
+        Text { text: label; color: enabled ? #f4f7fb : #738195; horizontal-alignment: center; vertical-alignment: center; font-weight: 600; }
+        forward-focus: key-focus;
+        key-focus := FocusScope {
+            key-pressed(event) => {
+                if (event.text == Key.Return || event.text == " ") { root.clicked(); return accept; }
+                return reject;
+            }
+        }
+        touch := TouchArea { enabled: parent.enabled; clicked => { key-focus.focus(); parent.clicked(); } }
+}
+
+component GhostButton inherits Rectangle {
+        in property <string> label;
+        callback clicked;
+        height: 42px;
+        border-radius: 7px;
+        border-width: 1px;
+        border-color: #263241;
+        background: touch.pressed ? #1b2633 : touch.has-hover ? #18222d : #141c26;
+        accessible-role: button;
+        accessible-label: label;
+        accessible-action-default => { root.clicked(); }
+        Text { text: label; color: #d6deea; horizontal-alignment: center; vertical-alignment: center; }
+        forward-focus: key-focus;
+        key-focus := FocusScope {
+            key-pressed(event) => {
+                if (event.text == Key.Return || event.text == " ") { root.clicked(); return accept; }
+                return reject;
+            }
+        }
+        touch := TouchArea { clicked => { key-focus.focus(); parent.clicked(); } }
+}
+
+component PasswordField inherits Rectangle {
+        in-out property <string> value;
+        in property <string> hint;
+        height: 42px;
+        background: #0f1620;
+        border-width: edit.has-focus ? 2px : 1px;
+        border-color: edit.has-focus ? #2f81f7 : #263241;
+        border-radius: 6px;
+        edit := LineEdit {
+            x: 10px; y: 3px; width: parent.width - 20px; height: parent.height - 6px;
+            text <=> root.value;
+            placeholder-text: root.hint;
+            input-type: password;
+            key-pressed(event) => {
+                if (event.modifiers.control && (event.text == "c" || event.text == "x")) { return accept; }
+                return reject;
+            }
+        }
+}
+
+export component AppWindow inherits Window {
+    title: "CipherFS";
+    preferred-width: 600px;
+    preferred-height: 460px;
+    min-width: 520px;
+    min-height: 400px;
+    background: #0b1017;
+
+    in-out property <int> page: 0;
+    in-out property <string> heading: "CipherFS";
+    in-out property <string> detail: "";
+    in-out property <string> path-text: "";
+    in-out property <string> primary-label: "Continue";
+    in-out property <string> secondary-label: "Back";
+    in-out property <string> tertiary-label: "";
+    in-out property <string> quaternary-label: "";
+    in-out property <string> password: "";
+    in-out property <string> password-confirm: "";
+    in-out property <string> old-password: "";
+    in-out property <string> duress-password: "";
+    in-out property <string> duress-confirm: "";
+    in-out property <bool> show-duress: false;
+    in-out property <bool> busy: false;
+    in-out property <bool> cancel-enabled: true;
+    in-out property <float> progress-value: 0;
+    in-out property <bool> overlay-visible: false;
+    in-out property <string> overlay-title: "";
+    in-out property <string> overlay-detail: "";
+    in-out property <string> overlay-confirm-label: "Confirm";
+
+    callback primary-action();
+    callback secondary-action();
+    callback tertiary-action();
+    callback quaternary-action();
+    callback choose-path();
+    callback toggle-duress();
+    callback cancel-operation();
+    callback overlay-confirm();
+    callback overlay-cancel();
+    callback window-close() -> bool;
+
+    VerticalLayout {
+        padding: 28px;
+        spacing: 18px;
+        Text { text: root.heading; color: #f4f7fb; font-size: 26px; font-weight: 700; }
+        Text { text: root.detail; color: root.page == 7 ? #f05d68 : #9eacbc; wrap: word-wrap; }
+
+        Rectangle {
+            background: #141c26;
+            border-width: 1px;
+            border-color: #263241;
+            border-radius: 10px;
+            VerticalLayout {
+                padding: 18px;
+                spacing: 12px;
+
+                if root.page == 0 || root.page == 1 : VerticalLayout {
+                    spacing: 10px;
+                    primary-action-button := ActionButton { label: root.primary-label; clicked => { root.primary-action(); } }
+                    secondary-action-button := GhostButton { label: root.secondary-label; clicked => { root.secondary-action(); } }
+                    if root.tertiary-label != "" : tertiary-action-button := GhostButton { label: root.tertiary-label; clicked => { root.tertiary-action(); } }
+                    if root.quaternary-label != "" : quaternary-action-button := GhostButton { label: root.quaternary-label; clicked => { root.quaternary-action(); } }
+                }
+
+                if root.page == 2 : ScrollView {
+                    VerticalLayout {
+                        spacing: 10px;
+                        if root.path-text != "" : HorizontalLayout {
+                            Text { text: root.path-text; color: #d6deea; wrap: word-wrap; }
+                            GhostButton { width: 110px; label: "Browse..."; clicked => { root.choose-path(); } }
+                        }
+                        if root.old-password != "__unused__" : PasswordField { value <=> root.old-password; hint: "Current password"; }
+                        PasswordField { value <=> root.password; hint: root.old-password == "__unused__" ? "Password" : "New password"; }
+                        if root.password-confirm != "__unused__" : PasswordField { value <=> root.password-confirm; hint: "Confirm password"; }
+                        if root.tertiary-label == "duress" : GhostButton { label: root.show-duress ? "Remove experimental Duress Password" : "Configure experimental Duress Password"; clicked => { root.toggle-duress(); } }
+                        if root.show-duress : PasswordField { value <=> root.duress-password; hint: "Experimental Duress Password"; }
+                        if root.show-duress : PasswordField { value <=> root.duress-confirm; hint: "Confirm Duress Password"; }
+                        HorizontalLayout {
+                            spacing: 10px;
+                            GhostButton { label: "Back"; clicked => { root.secondary-action(); } }
+                            ActionButton { label: root.primary-label; clicked => { root.primary-action(); } }
+                        }
+                    }
+                }
+
+                if root.page == 3 : VerticalLayout {
+                    spacing: 18px;
+                    Rectangle { height: 10px; border-radius: 5px; background: #263241;
+                        Rectangle { width: parent.width * root.progress-value; height: parent.height; border-radius: 5px; background: #2f81f7; }
+                    }
+                    ActionButton { label: root.cancel-enabled ? "Cancel" : "Finishing safely..."; enabled: root.cancel-enabled; clicked => { root.cancel-operation(); } }
+                }
+
+                if root.page == 4 || root.page == 5 || root.page == 7 : VerticalLayout {
+                    spacing: 10px;
+                    if root.path-text != "" : Text { text: root.path-text; color: #d6deea; wrap: word-wrap; }
+                    ActionButton { label: root.primary-label; clicked => { root.primary-action(); } }
+                    if root.secondary-label != "" : GhostButton { label: root.secondary-label; clicked => { root.secondary-action(); } }
+                }
+            }
+        }
+    }
+
+    if root.overlay-visible : Rectangle {
+        background: #aa000000;
+        Rectangle {
+            width: min(parent.width - 60px, 440px); height: 220px;
+            x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+            background: #141c26; border-color: #263241; border-width: 1px; border-radius: 10px;
+            VerticalLayout { padding: 22px; spacing: 14px;
+                Text { text: root.overlay-title; color: #f4f7fb; font-size: 20px; font-weight: 700; }
+                Text { text: root.overlay-detail; color: #9eacbc; wrap: word-wrap; }
+                HorizontalLayout { spacing: 10px;
+                    GhostButton { label: "Keep open"; clicked => { root.overlay-cancel(); } }
+                    ActionButton { label: root.overlay-confirm-label; clicked => { root.overlay-confirm(); } }
+                }
+            }
+        }
+    }
+}

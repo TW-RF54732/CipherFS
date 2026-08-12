@@ -45,10 +45,8 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "requires a pre-install environment without WinFsp"]
     fn ci_runner_starts_without_winfsp_runtime() {
-        if std::env::var_os("CIPHERFS_EXPECT_WINFSP_MISSING").is_none() {
-            return;
-        }
         match initialize() {
             Ok(_) => panic!("WinFsp was already available before the pinned CI install step"),
             Err(error) => assert!(

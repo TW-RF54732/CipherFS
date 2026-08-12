@@ -38,7 +38,9 @@ after that release is deployed.
    FUSE pack/read/corruption/unmount smoke.
 4. Run `cargo audit --ignore RUSTSEC-2024-0436` and
    `cargo deny --locked check advisories licenses sources`. The paste advisory
-   is the only accepted warning and must be reconsidered every release.
+   plus the pinned Slint `bincode`, `rustybuzz` and `ttf-parser` unmaintained
+   advisories are the only accepted warnings and must be reconsidered every
+   release.
 5. Update README, SECURITY, `FORMAT_V2.md`, testing instructions and the exact
    release note. Regenerate `THIRD_PARTY_DEPENDENCIES.md`; confirm the GPLv3
    text, third-party notices and vendored WinFsp provenance are current.
