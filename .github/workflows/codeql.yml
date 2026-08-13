@@ -3,8 +3,26 @@ name: CodeQL
 on:
   push:
     branches: ["main"]
+    paths:
+      - "**/*.rs"
+      - "Cargo.toml"
+      - "**/Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "apps/**/*.slint"
+      - "vendor/**"
+      - ".github/workflows/**"
   pull_request:
     branches: ["main"]
+    paths:
+      - "**/*.rs"
+      - "Cargo.toml"
+      - "**/Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "apps/**/*.slint"
+      - "vendor/**"
+      - ".github/workflows/**"
   schedule:
     - cron: "17 3 * * 1"
 

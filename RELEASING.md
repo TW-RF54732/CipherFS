@@ -5,6 +5,12 @@ release gates pass. A cross-compile is never recorded as a FUSE or WinFsp
 runtime validation; the pinned GitHub Linux runner may be the authoritative
 Linux environment when the local WSL toolchain is not cleanly reproducible.
 
+Normal `main` pushes and pull requests run lightweight Linux formatting,
+Clippy, unit and dependency-boundary checks only when build-related paths
+change. CodeQL runs for code-related changes and on its weekly schedule.
+Documentation-only changes do not start Rust CI. The `v*` tag workflow is the
+authoritative remote supply-chain, Linux/FUSE, Windows/WinFsp and release gate.
+
 ## One-time Signing Setup
 
 1. Generate a Minisign keypair with an unencrypted CI key:
@@ -23,8 +29,10 @@ after that release is deployed.
 
 ## Release Checklist
 
-1. Confirm the branch, clean worktree, recent commits, `.github` workflows and
-   intended version. Do not stage unrelated changes.
+1. Confirm the branch, clean worktree, recent commits, `.github` workflows,
+   lightweight `main` checks, relevant CodeQL result and intended version. Do
+   not stage unrelated changes. A green lightweight check is not a substitute
+   for the complete local and tag gates below.
 2. On a clean Windows runner before WinFsp installation, verify non-mount CLI
    and shell headless startup, both PE delay imports, and the missing-runtime error/install URL.
    Then, on Windows with the official WinFsp runtime installed, run:

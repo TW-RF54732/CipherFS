@@ -27,9 +27,13 @@ runs formatting, diff validation, selected-package tests and Clippy only.
 the Linux release CLI/FUSE exercise. `Full` adds the expensive workspace and
 supply-chain gates. The scripts never start WSL, install runtimes or download
 development tools. Core changes include current-platform consumers; frontend
-changes do not test unrelated adapters. CI remains platform-complete: shared
-Core/Update/CLI/FUSE behavior runs on Linux, while Windows-specific CLI,
-WinFsp, Shell, Slint and native-dialog behavior runs on Windows.
+changes do not test unrelated adapters. Validation remains platform-complete
+across its layers: shared Core/Update/CLI/FUSE formatting, Clippy and unit tests
+run in lightweight CI
+for build-related changes. The `v*` tag workflow is the platform-complete gate:
+it runs Linux release/FUSE behavior plus Windows-specific CLI, WinFsp, Shell,
+Slint and native-dialog behavior. Documentation-only changes do not start Rust
+CI, and CodeQL runs for code-related changes plus its weekly schedule.
 
 ### What each layer proves
 
