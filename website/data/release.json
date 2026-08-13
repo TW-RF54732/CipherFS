@@ -1,0 +1,36 @@
+{
+    "generated_at":  "2026-08-13T18:35:23.5562885Z",
+    "featured":  {
+                     "tag":  "v3.2.0",
+                     "channel":  "stable",
+                     "published_at":  "2026-08-13T11:37:17.0000000Z",
+                     "release_url":  "https://github.com/TW-RF54732/CipherFS/releases/tag/v3.2.0"
+                 },
+    "installer":  {
+                      "name":  "CipherFS-Setup-x64.exe",
+                      "url":  "https://github.com/TW-RF54732/CipherFS/releases/download/v3.2.0/CipherFS-Setup-x64.exe",
+                      "size_bytes":  9833316,
+                      "download_count":  1
+                  },
+    "totals":  {
+                   "installer_downloads":  1
+               },
+    "alternatives":  {
+                         "windows_portable":  {
+                                                  "name":  "cipherfs-windows-portable-x64.zip",
+                                                  "url":  "https://github.com/TW-RF54732/CipherFS/releases/download/v3.2.0/cipherfs-windows-portable-x64.zip",
+                                                  "size_bytes":  8394781
+                                              },
+                         "linux_x64":  {
+                                           "name":  "cipherfs-linux-x64.tar.gz",
+                                           "url":  "https://github.com/TW-RF54732/CipherFS/releases/download/v3.2.0/cipherfs-linux-x64.tar.gz",
+                                           "size_bytes":  3047134
+                                       }
+                     },
+    "verification":  {
+                         "checksum_url":  "https://github.com/TW-RF54732/CipherFS/releases/download/v3.2.0/cipherfs-windows-x64.sha256",
+                         "manifest_url":  "https://github.com/TW-RF54732/CipherFS/releases/download/v3.2.0/cipherfs-windows-setup.manifest",
+                         "minisign_url":  "https://github.com/TW-RF54732/CipherFS/releases/download/v3.2.0/cipherfs-windows-setup.manifest.minisig",
+                         "attestation_url":  "https://github.com/TW-RF54732/CipherFS/attestations"
+                     }
+}

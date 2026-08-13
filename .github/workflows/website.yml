@@ -1,0 +1,74 @@
+name: Website
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "website/**"
+      - ".github/workflows/website.yml"
+  release:
+    types: [published]
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+
+      - name: Test release selection and download totals
+        shell: pwsh
+        run: ./website/scripts/test-release-data.ps1
+
+      - name: Test download-page fallback
+        run: node ./website/tests/download-fallback.test.js
+
+      - name: Stage static website
+        shell: bash
+        run: |
+          mkdir -p _site
+          rsync -a --exclude scripts --exclude tests website/ _site/
+
+      - name: Generate current GitHub Release data
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./website/scripts/generate-release-data.ps1 -OutputPath ./_site/data/release.json
+
+      - name: Validate deployable website
+        shell: pwsh
+        run: ./website/scripts/validate-site.ps1 -WebsiteRoot ./_site
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
+        with:
+          path: _site
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

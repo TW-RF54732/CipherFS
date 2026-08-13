@@ -1,0 +1,17 @@
+[
+  {
+    "tag_name": "v3.2.0",
+    "draft": false,
+    "prerelease": false,
+    "published_at": "2026-08-13T11:37:17Z",
+    "html_url": "https://github.com/TW-RF54732/CipherFS/releases/tag/v3.2.0",
+    "assets": [
+      {
+        "name": "cipherfs-linux-x64.tar.gz",
+        "browser_download_url": "https://github.com/TW-RF54732/CipherFS/releases/download/v3.2.0/cipherfs-linux-x64.tar.gz",
+        "size": 3047134,
+        "download_count": 3
+      }
+    ]
+  }
+]

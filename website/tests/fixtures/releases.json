@@ -1,0 +1,92 @@
+[
+  {
+    "tag_name": "v4.0.0-beta",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-08-20T00:00:00Z",
+    "html_url": "https://github.com/TW-RF54732/CipherFS/releases/tag/v4.0.0-beta",
+    "assets": [
+      {
+        "name": "CipherFS-Setup-x64.exe",
+        "browser_download_url": "https://github.com/TW-RF54732/CipherFS/releases/download/v4.0.0-beta/CipherFS-Setup-x64.exe",
+        "size": 12000000,
+        "download_count": 11
+      }
+    ]
+  },
+  {
+    "tag_name": "v3.2.0",
+    "draft": false,
+    "prerelease": false,
+    "published_at": "2026-08-13T11:37:17Z",
+    "html_url": "https://github.com/TW-RF54732/CipherFS/releases/tag/v3.2.0",
+    "assets": [
+      {
+        "name": "CipherFS-Setup-x64.exe",
+        "browser_download_url": "https://github.com/TW-RF54732/CipherFS/releases/download/v3.2.0/CipherFS-Setup-x64.exe",
+        "size": 9833316,
+        "download_count": 7
+      },
+      {
+        "name": "cipherfs-windows-portable-x64.zip",
+        "browser_download_url": "https://github.com/TW-RF54732/CipherFS/releases/download/v3.2.0/cipherfs-windows-portable-x64.zip",
+        "size": 8394781,
+        "download_count": 5
+      },
+      {
+        "name": "cipherfs-linux-x64.tar.gz",
+        "browser_download_url": "https://github.com/TW-RF54732/CipherFS/releases/download/v3.2.0/cipherfs-linux-x64.tar.gz",
+        "size": 3047134,
+        "download_count": 3
+      },
+      {
+        "name": "cipherfs-windows-x64.sha256",
+        "browser_download_url": "https://github.com/TW-RF54732/CipherFS/releases/download/v3.2.0/cipherfs-windows-x64.sha256",
+        "size": 353,
+        "download_count": 1
+      },
+      {
+        "name": "cipherfs-windows-setup.manifest",
+        "browser_download_url": "https://github.com/TW-RF54732/CipherFS/releases/download/v3.2.0/cipherfs-windows-setup.manifest",
+        "size": 158,
+        "download_count": 1
+      },
+      {
+        "name": "cipherfs-windows-setup.manifest.minisig",
+        "browser_download_url": "https://github.com/TW-RF54732/CipherFS/releases/download/v3.2.0/cipherfs-windows-setup.manifest.minisig",
+        "size": 326,
+        "download_count": 1
+      }
+    ]
+  },
+  {
+    "tag_name": "v3.1.5",
+    "draft": false,
+    "prerelease": false,
+    "published_at": "2026-08-12T00:00:00Z",
+    "html_url": "https://github.com/TW-RF54732/CipherFS/releases/tag/v3.1.5",
+    "assets": [
+      {
+        "name": "CipherFS-Setup-x64.exe",
+        "browser_download_url": "https://github.com/TW-RF54732/CipherFS/releases/download/v3.1.5/CipherFS-Setup-x64.exe",
+        "size": 9000000,
+        "download_count": 13
+      }
+    ]
+  },
+  {
+    "tag_name": "v5.0.0",
+    "draft": true,
+    "prerelease": false,
+    "published_at": "2026-09-01T00:00:00Z",
+    "html_url": "https://github.com/TW-RF54732/CipherFS/releases/tag/v5.0.0",
+    "assets": [
+      {
+        "name": "CipherFS-Setup-x64.exe",
+        "browser_download_url": "https://github.com/TW-RF54732/CipherFS/releases/download/v5.0.0/CipherFS-Setup-x64.exe",
+        "size": 15000000,
+        "download_count": 1000
+      }
+    ]
+  }
+]

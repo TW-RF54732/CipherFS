@@ -1,0 +1,16 @@
+{
+  "name": "CipherFS",
+  "short_name": "CipherFS",
+  "description": "Windows Shell encrypted container workflow",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#080e15",
+  "theme_color": "#080e15",
+  "icons": [
+    {
+      "src": "./assets/images/brand/cipherfs-app-icon.png",
+      "sizes": "1280x1280",
+      "type": "image/png"
+    }
+  ]
+}

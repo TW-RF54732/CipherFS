@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://tw-rf54732.github.io/CipherFS/sitemap.xml
