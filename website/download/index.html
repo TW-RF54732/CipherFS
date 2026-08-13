@@ -3,12 +3,12 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#080e15">
-    <meta name="description" content="下載 CipherFS Windows Installer，查看最新版本、安裝需求與驗證資料。">
+    <meta name="theme-color" content="#080d13">
+    <meta name="description" content="下載 CipherFS Windows Installer，查看最新穩定版本、下載次數、其他平台檔案與發布驗證資料。">
     <meta property="og:type" content="website">
     <meta property="og:locale" content="zh_TW">
     <meta property="og:title" content="下載 CipherFS for Windows">
-    <meta property="og:description" content="取得最新 Windows Installer、版本資訊與發布驗證資料。">
+    <meta property="og:description" content="取得 CipherFS 最新 Windows Installer、其他平台檔案與發布驗證資料。">
     <meta property="og:url" content="https://tw-rf54732.github.io/CipherFS/download/">
     <meta property="og:image" content="https://tw-rf54732.github.io/CipherFS/assets/images/brand/og-image.png">
     <meta name="twitter:card" content="summary_large_image">
@@ -19,18 +19,18 @@
     <title>下載 CipherFS for Windows</title>
   </head>
   <body>
-    <a class="skip-link" href="#main-content">跳到主要內容</a>
+    <a class="skip-link" href="#main-content">跳至主要內容</a>
 
     <header class="site-header">
       <div class="container nav-shell">
         <a class="brand" href="../" aria-label="CipherFS 首頁">
-          <img src="../assets/images/brand/cipherfs-app-icon.png" alt="" width="36" height="36">
+          <img src="../assets/images/brand/cipherfs-app-icon.png" alt="" width="32" height="32">
           <span>CipherFS</span>
         </a>
         <nav class="site-nav" aria-label="主要導覽">
           <a class="nav-link" href="../">介紹</a>
           <a class="nav-link is-current" href="./" aria-current="page">下載</a>
-          <a class="button button-small button-quiet" href="https://github.com/TW-RF54732/CipherFS">GitHub</a>
+          <a class="button button-small button-secondary nav-github" href="https://github.com/TW-RF54732/CipherFS">GitHub</a>
         </nav>
       </div>
     </header>
@@ -38,166 +38,152 @@
     <main id="main-content">
       <section class="download-hero">
         <div class="container">
-          <div class="download-heading">
-            <p class="eyebrow"><span class="status-dot" aria-hidden="true"></span>Official GitHub Release</p>
-            <h1>下載 CipherFS<br>for Windows.</h1>
-            <p>建議大多數 Windows 使用者使用 Installer。版本與下載連結直接取自 CipherFS 的 GitHub Releases。</p>
-          </div>
+          <header class="download-heading">
+            <div>
+              <p class="eyebrow"><span class="status-dot" aria-hidden="true"></span>Official GitHub Release</p>
+              <h1>下載 CipherFS<br>for Windows</h1>
+            </div>
+            <p>建議大多數 Windows 使用者下載 Installer。檔案直接來自 CipherFS 的 GitHub Releases。</p>
+          </header>
 
-          <article class="download-card" aria-labelledby="download-product-title">
-            <div class="download-main">
-              <div class="release-badges">
-                <span class="badge badge-accent">Recommended</span>
-                <span class="badge">Stable</span>
-                <span class="badge">Windows x64</span>
-              </div>
-
-              <div class="download-product">
-                <img src="../assets/images/brand/cipherfs-app-icon.png" alt="CipherFS 應用程式圖示" width="84" height="84">
+          <article class="release-panel" aria-labelledby="download-product-title">
+            <div class="release-primary">
+              <p class="release-kicker">Recommended · Stable · Windows x64</p>
+              <div class="release-title-row">
+                <img src="../assets/images/brand/cipherfs-app-icon.png" alt="" width="72" height="72">
                 <div>
                   <h2 id="download-product-title">CipherFS Installer</h2>
-                  <p class="release-version" data-release-version aria-live="polite">正在讀取版本…</p>
+                  <p class="release-version" data-release-version aria-live="polite">正在讀取最新版本…</p>
                 </div>
               </div>
 
               <a class="button button-primary installer-button" data-installer-link href="https://github.com/TW-RF54732/CipherFS/releases">
                 下載 Windows Installer <span aria-hidden="true">↓</span>
               </a>
-              <div class="file-meta">
-                <span data-installer-name>CipherFS-Setup-x64.exe</span>
-                <span data-installer-size>Windows x64</span>
-              </div>
+              <p class="installer-meta"><span data-installer-name>CipherFS-Setup-x64.exe</span><span data-installer-size>Windows x64</span></p>
+              <p class="loading-text" data-release-status aria-live="polite">正在從 GitHub Releases 取得最新資料…</p>
+            </div>
 
+            <div class="release-details">
               <div class="download-stats" data-download-stats hidden>
                 <div class="stat">
                   <strong data-installer-downloads>—</strong>
-                  <span>此版本 Installer 下載</span>
+                  <span>此版本 Installer 下載次數</span>
                 </div>
                 <div class="stat">
                   <strong data-total-downloads>—</strong>
-                  <span>歷代 Installer 累計下載</span>
+                  <span>歷代 Installer 累計下載次數</span>
                 </div>
               </div>
-              <p class="loading-text" data-release-status aria-live="polite">正在從 GitHub Releases 取得最新版本。</p>
-            </div>
-
-            <aside class="download-aside">
-              <div>
-                <h3>Installer 會做什麼？</h3>
+              <div class="release-includes">
+                <h3>Installer 包含內容</h3>
                 <ul>
                   <li>安裝 CipherFS CLI 與 Windows Shell</li>
-                  <li>加入 Explorer 右鍵指令與 `.cfs` 關聯</li>
-                  <li>缺少相容 WinFsp 時安裝固定版本</li>
-                  <li>支援日後升級、修復與解除安裝</li>
+                  <li>整合 Explorer 右鍵選單與 <code>.cfs</code> 檔案關聯</li>
+                  <li>需要時安裝 WinFsp</li>
+                  <li>支援後續升級、修復與解除安裝</li>
                 </ul>
               </div>
-              <p class="aside-note">Setup 是離線安裝程式。移除 CipherFS 時會保留可能由其他程式共用的 WinFsp。</p>
-            </aside>
+            </div>
           </article>
         </div>
       </section>
 
-      <section class="section notice-section" aria-labelledby="before-install-title">
+      <section class="section section-rule" aria-labelledby="before-install-title">
         <div class="container">
-          <div class="section-heading compact-heading">
-            <div>
-              <p class="eyebrow">Before installation</p>
-              <h2 id="before-install-title">安裝前，先知道這三件事。</h2>
-            </div>
-          </div>
+          <header class="section-intro">
+            <p class="eyebrow">Before installation</p>
+            <h2 id="before-install-title">安裝前<br>先知道三件事</h2>
+          </header>
           <div class="notice-grid">
-            <article class="notice-card">
+            <article>
               <span>01 / ADMIN</span>
-              <h3>需要系統管理員核准</h3>
-              <p>Setup 會進行 machine-wide 安裝、建立 Explorer 整合，並在需要時安裝 WinFsp。</p>
+              <h3>需要管理員權限</h3>
+              <p>Setup 會執行 machine-wide 安裝，整合 Explorer，並在需要時安裝 WinFsp。</p>
             </article>
-            <article class="notice-card">
+            <article>
               <span>02 / SIGNING</span>
-              <h3>Windows 可能顯示警告</h3>
-              <p>目前 Windows build 沒有 Authenticode code-signing certificate，因此可能顯示 Unknown publisher。</p>
+              <h3>可能出現 Unknown publisher</h3>
+              <p>目前 Windows build 沒有 Authenticode code-signing certificate。</p>
             </article>
-            <article class="notice-card">
+            <article>
               <span>03 / PRIVACY</span>
-              <h3>檔案留在你的電腦</h3>
-              <p>網站只提供安裝檔連結；CipherFS 的封裝、驗證與解開流程在本機進行。</p>
+              <h3>檔案留在本機</h3>
+              <p>CipherFS 的封裝、掛載與驗證流程不需要把檔案上傳到雲端。</p>
             </article>
           </div>
         </div>
       </section>
 
-      <section class="section section-rule" aria-labelledby="after-install-title">
+      <section class="section section-contrast" aria-labelledby="after-install-title">
         <div class="container after-install-grid">
-          <figure class="product-shot product-shot-menu">
-            <div class="shot-label"><span>Next</span> Windows Explorer</div>
-            <img src="../assets/images/screenshots/right-mouse-menu.png" alt="Windows 檔案總管的右鍵選單，其中包含 Pack with CipherFS 指令" width="668" height="302" loading="lazy">
-          </figure>
           <div class="after-install-copy">
             <p class="eyebrow">After installation</p>
-            <h2 id="after-install-title">安裝完成，從右鍵開始。</h2>
-            <p>不需要先設定帳號或連接雲端。安裝後直接回到檔案總管：</p>
+            <h2 id="after-install-title">安裝完成<br>從右鍵開始</h2>
             <ol class="steps">
-              <li>在檔案或資料夾上按右鍵。</li>
-              <li>Windows 11 使用者若未看到指令，選擇「顯示其他選項」。</li>
-              <li>選擇 <strong>Pack with CipherFS</strong> 建立容器，或雙擊既有的 <code>.cfs</code>。</li>
+              <li>在 Explorer 選取資料夾。</li>
+              <li>Windows 11 使用者如有需要，先展開「顯示其他選項」。</li>
+              <li>選擇 <strong>Pack with CipherFS</strong>，建立 <code>.cfs</code> 容器。</li>
             </ol>
           </div>
+          <figure class="shot-frame shot-wide">
+            <img src="../assets/images/screenshots/right-mouse-menu.png" alt="Windows 檔案總管右鍵選單中的 Pack with CipherFS 指令" width="668" height="302" loading="lazy">
+          </figure>
         </div>
       </section>
 
       <section class="section section-rule" aria-labelledby="other-downloads-title">
-        <div class="container downloads-grid">
-          <div class="downloads-copy">
-            <p class="eyebrow">Alternative &amp; verification</p>
-            <h2 id="other-downloads-title">其他下載與發布驗證。</h2>
-            <p>Portable 與 Linux 套件適合熟悉手動安裝的使用者。雜湊、簽章與 GitHub Attestations 提供進一步的發布驗證材料。</p>
-          </div>
+        <div class="container">
+          <header class="section-intro split-heading resources-heading">
+            <div>
+              <p class="eyebrow">Alternative &amp; verification</p>
+              <h2 id="other-downloads-title">其他檔案<br>發布驗證資料</h2>
+            </div>
+            <p>Portable 與 Linux 壓縮檔適合自行管理；校驗與簽章資料可用來核對下載內容。</p>
+          </header>
 
-          <div class="link-list">
-            <a data-portable-link href="https://github.com/TW-RF54732/CipherFS/releases">
-              <span><span class="link-name">Windows portable ZIP</span><span class="link-detail" data-portable-detail>進階使用者；不修改 PATH、Registry 或 Explorer</span></span>
-              <span class="link-arrow" aria-hidden="true">↓</span>
-            </a>
-            <a data-linux-link href="https://github.com/TW-RF54732/CipherFS/releases">
-              <span><span class="link-name">Linux x64 archive</span><span class="link-detail" data-linux-detail>Linux CLI 與 FUSE 3 工作流程</span></span>
-              <span class="link-arrow" aria-hidden="true">↓</span>
-            </a>
-            <a data-release-notes-link href="https://github.com/TW-RF54732/CipherFS/releases">
-              <span><span class="link-name">Release notes</span><span class="link-detail">版本內容、需求與相容性</span></span>
-              <span class="link-arrow" aria-hidden="true">↗</span>
-            </a>
-            <a data-checksum-link href="https://github.com/TW-RF54732/CipherFS/releases">
-              <span><span class="link-name">SHA-256 checksums</span><span class="link-detail">驗證下載資產的雜湊</span></span>
-              <span class="link-arrow" aria-hidden="true">↓</span>
-            </a>
-            <a data-manifest-link href="https://github.com/TW-RF54732/CipherFS/releases">
-              <span><span class="link-name">Windows Setup manifest</span><span class="link-detail">版本、平台、大小與 SHA-256 中繼資料</span></span>
-              <span class="link-arrow" aria-hidden="true">↓</span>
-            </a>
-            <a data-minisign-link href="https://github.com/TW-RF54732/CipherFS/releases">
-              <span><span class="link-name">Minisign signature</span><span class="link-detail">Windows Setup manifest 簽章</span></span>
-              <span class="link-arrow" aria-hidden="true">↓</span>
-            </a>
-            <a data-attestation-link href="https://github.com/TW-RF54732/CipherFS/attestations">
-              <span><span class="link-name">GitHub Artifact Attestations</span><span class="link-detail">GitHub-hosted build provenance</span></span>
-              <span class="link-arrow" aria-hidden="true">↗</span>
-            </a>
-            <a href="https://github.com/TW-RF54732/CipherFS/releases">
-              <span><span class="link-name">查看所有 GitHub Releases</span><span class="link-detail">完整資產、舊版本與原始碼</span></span>
-              <span class="link-arrow" aria-hidden="true">↗</span>
-            </a>
+          <div class="resource-columns">
+            <section aria-labelledby="alternative-title">
+              <h3 id="alternative-title">其他下載</h3>
+              <div class="resource-list">
+                <a data-portable-link href="https://github.com/TW-RF54732/CipherFS/releases">
+                  <span><strong>Windows portable ZIP</strong><small data-portable-detail>不安裝、不變更 PATH、Registry 或 Explorer。</small></span>
+                  <span aria-hidden="true">↓</span>
+                </a>
+                <a data-linux-link href="https://github.com/TW-RF54732/CipherFS/releases">
+                  <span><strong>Linux x64 archive</strong><small data-linux-detail>Linux CLI 與 FUSE 3 工作流程</small></span>
+                  <span aria-hidden="true">↓</span>
+                </a>
+                <a data-release-notes-link href="https://github.com/TW-RF54732/CipherFS/releases">
+                  <span><strong>Release notes</strong><small>版本變更、相容性與已知限制</small></span>
+                  <span aria-hidden="true">↗</span>
+                </a>
+              </div>
+            </section>
+
+            <section aria-labelledby="verification-title">
+              <h3 id="verification-title">驗證資料</h3>
+              <div class="resource-list">
+                <a data-checksum-link href="https://github.com/TW-RF54732/CipherFS/releases"><span><strong>SHA-256 checksums</strong><small>核對下載檔案的雜湊值</small></span><span aria-hidden="true">↓</span></a>
+                <a data-manifest-link href="https://github.com/TW-RF54732/CipherFS/releases"><span><strong>Windows Setup manifest</strong><small>Setup 版本、大小與 SHA-256 資料</small></span><span aria-hidden="true">↓</span></a>
+                <a data-minisign-link href="https://github.com/TW-RF54732/CipherFS/releases"><span><strong>Minisign signature</strong><small>Windows Setup manifest 簽章</small></span><span aria-hidden="true">↓</span></a>
+                <a data-attestation-link href="https://github.com/TW-RF54732/CipherFS/attestations"><span><strong>Artifact Attestations</strong><small>GitHub-hosted build provenance</small></span><span aria-hidden="true">↗</span></a>
+                <a href="https://github.com/TW-RF54732/CipherFS/releases"><span><strong>完整 GitHub Releases</strong><small>所有資產與歷史版本</small></span><span aria-hidden="true">↗</span></a>
+              </div>
+            </section>
           </div>
         </div>
       </section>
 
-      <section class="section download-boundary">
-        <div class="container boundary-card">
+      <section class="section boundary-section">
+        <div class="container boundary-grid">
           <div>
             <p class="eyebrow">Experimental software</p>
-            <h2>不是重要資料的唯一防線。</h2>
+            <h2>不是重要資料的唯一防線</h2>
           </div>
           <div class="boundary-copy">
-            <p>CipherFS 尚未接受專業安全稽核或廣泛實際環境驗證。請將它視為個人、離線、非關鍵檔案的實驗性隱私工具。</p>
-            <p>請保留獨立備份，並在使用前閱讀安全界線與測試說明。</p>
+            <p>CipherFS 尚未經過專業安全稽核。請把它用於個人、離線、非關鍵檔案，不要用它取代可靠備份。</p>
+            <p>安裝或使用前，請先閱讀安全界線與測試方式。</p>
             <div class="inline-links">
               <a href="https://github.com/TW-RF54732/CipherFS/blob/main/SECURITY.md">安全界線</a>
               <a href="https://github.com/TW-RF54732/CipherFS/blob/main/TESTING.md">測試方式</a>
@@ -211,8 +197,8 @@
     <aside class="star-prompt" data-star-prompt hidden aria-labelledby="star-prompt-title">
       <button class="star-prompt-close" type="button" data-star-prompt-close aria-label="關閉 GitHub 提示">×</button>
       <p class="star-prompt-kicker">下載已開始</p>
-      <h2 id="star-prompt-title">覺得 CipherFS 不錯嗎？</h2>
-      <p>歡迎到 GitHub 看看原始碼；如果它對你有幫助，也請幫忙點一顆 Star。</p>
+      <h2 id="star-prompt-title">喜歡 CipherFS 嗎</h2>
+      <p>如果它對你有幫助，歡迎到 GitHub 留下一顆 Star。</p>
       <div class="star-prompt-links">
         <a href="https://github.com/TW-RF54732/CipherFS">查看 GitHub</a>
         <a class="star-prompt-star" href="https://github.com/TW-RF54732/CipherFS">幫忙點 Star <span aria-hidden="true">↗</span></a>
@@ -222,7 +208,7 @@
     <footer class="site-footer">
       <div class="container footer-grid">
         <div>
-          <a class="brand footer-brand" href="../"><img src="../assets/images/brand/cipherfs-app-icon.png" alt="" width="30" height="30"><span>CipherFS</span></a>
+          <a class="brand footer-brand" href="../"><img src="../assets/images/brand/cipherfs-app-icon.png" alt="" width="28" height="28"><span>CipherFS</span></a>
           <p>Experimental personal/offline privacy software.</p>
         </div>
         <div class="footer-links">
