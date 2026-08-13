@@ -342,6 +342,14 @@ code {
   letter-spacing: 0.04em;
 }
 
+.hero-logo {
+  margin: 0;
+}
+
+.hero-logo img {
+  width: 100%;
+}
+
 .product-shot {
   position: relative;
   margin: 0;
@@ -380,6 +388,11 @@ code {
 .product-shot-menu img {
   border: 1px solid rgb(255 255 255 / 16%);
   border-radius: 8px;
+}
+
+.workflow-entry {
+  max-width: 740px;
+  margin: -18px 0 104px auto;
 }
 
 .shot-label {
@@ -1225,6 +1238,10 @@ code {
 
   .feature .feature-copy {
     max-width: 720px;
+  }
+
+  .workflow-entry {
+    margin-bottom: 76px;
   }
 
   .principle-grid {
