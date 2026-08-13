@@ -84,6 +84,77 @@ flowchart LR
 - Bug reports and contributions are welcome, but maintenance and support are
   provided on a best-effort basis.
 
+## Quick Start: Install and Use
+
+Release binaries are provided for convenience and remain subject to the same
+experimental status and limitations described above.
+
+<details open>
+<summary><strong>Windows: recommended Shell and Explorer workflow</strong></summary>
+
+1. Download and unzip `cipherfs-windows-amd64.zip` from
+   [GitHub Releases](https://github.com/TW-RF54732/CipherFS/releases).
+2. Install the official [WinFsp 2.1 runtime](https://winfsp.dev/rel/). This is
+   required to mount containers; installing it first keeps the full Shell
+   workflow available. CipherFS does not install or rebrand the driver.
+3. Run `cipherfs-shell.exe`, then choose **Install Windows integration**. This
+   copies both executables to `%LOCALAPPDATA%\Programs\CipherFS` and registers
+   the current-user Explorer integration; no administrator rights, service, or
+   MSIX package is used.
+4. In Explorer, right-click a folder and select **Pack with CipherFS**. On
+   Windows 11, find this command under **Show more options**. To open an
+   existing container, double-click its `.cfs` file and choose **Mount**,
+   **Extract**, **Verify**, or **Change password**.
+
+Mount opens the container as an automatic read-only WinFsp drive. It remains
+mounted while the Shell window is open; choose **Unmount** before closing it.
+Pack, Extract, Verify, and Change Password work without WinFsp, but Verify
+still asks for a password because it authenticates the complete container.
+
+Run the Shell again to repair, update, or uninstall the integration. It adds an
+Open With handler without changing Windows `UserChoice` defaults.
+</details>
+
+<details>
+<summary><strong>Linux or Windows: CLI workflow</strong></summary>
+
+On Linux, install FUSE 3 and its development package with your distribution's
+package manager before using `mount`. Download `cipherfs-linux-amd64.tar.gz`
+from [GitHub Releases](https://github.com/TW-RF54732/CipherFS/releases), extract
+it, and make the binary executable:
+
+```bash
+chmod +x cipherfs
+```
+
+On Windows, unzip `cipherfs-windows-amd64.zip` and run `cipherfs.exe` from
+PowerShell. Windows has an unrelated `cipher.exe` command; use
+`Get-Command cipherfs.exe` if you need to verify the selected executable.
+Windows CLI mounting also requires the official WinFsp 2.1 runtime.
+
+Use the same commands on Linux and Windows; replace `./cipherfs` with
+`./cipherfs.exe` in PowerShell:
+
+```bash
+# Create an encrypted .cfs container (prompts for a password)
+./cipherfs pack <source_directory> [output_file] [--threads 0]
+
+# Open it read-only; use an existing empty directory on Linux
+./cipherfs mount <container.cfs> <mount_point> [--cache-mib 64]
+
+# Recover files into a destination that does not yet exist
+./cipherfs extract <container.cfs> <output_dir> [--threads 0]
+
+# Authenticate the entire container without extracting it
+./cipherfs verify <container.cfs> [--threads 0]
+```
+
+Press **Ctrl+C** to unmount from the CLI. On Windows, `<mount_point>` may be a
+drive such as `X:`, an empty directory, or `auto` to choose the next free drive
+letter. Run `cipherfs licenses` to see bundled attribution and the no-warranty
+notice.
+</details>
+
 ## What It Experiments With
 
 ### Encryption and Key Management
@@ -134,55 +205,7 @@ use the archived `v2.2.0-beta.1` (or an earlier compatible release) to extract
 it, then pack that directory with v3.1.0. Never use the legacy reader for an
 untrusted container.
 
-## Installation
-
-On Linux, install FUSE 3 and its development package. On Windows, install the
-official [WinFsp 2.1 runtime](https://winfsp.dev/rel/). The portable CipherFS
-download does not install or rebrand the WinFsp driver. The repository pins
-`winfsp-rs` 0.13 and vendors its generated WinFsp 2.1 bindings so a source build
-does not require libclang.
-
-### Download a Release
-
-Download a binary from the
-[GitHub Releases](https://github.com/TW-RF54732/CipherFS/releases) page, then
-make it executable:
-
-```bash
-chmod +x cipherfs
-```
-
-Release binaries are provided for convenience and remain subject to the same
-experimental status and limitations described above.
-
-### Windows Explorer Integration
-
-The Windows ZIP contains the portable `cipherfs.exe` CLI and the optional
-`cipherfs-shell.exe` native shell frontend. Run `cipherfs-shell.exe` and choose
-**Install Windows integration** to copy both executables to the current user's
-`%LOCALAPPDATA%\Programs\CipherFS` directory. No administrator rights, service,
-driver installation, or MSIX package is used.
-
-It registers an Open With handler for `.cfs` and a **Pack with CipherFS**
-folder verb. Windows 11 shows the folder verb under **Show more options**;
-CipherFS deliberately does not install a COM Explorer extension. The installer
-does not modify Windows `UserChoice` defaults. Run the shell frontend again to
-repair, update, or uninstall this integration.
-
-Double-clicking a `.cfs` file opens a dark, custom Slint interface. CipherFS
-prompts, progress, cancellation, mount status and errors use one Slint window;
-Windows continues to provide file pickers, Explorer launching and shell verbs.
-Mount creates an automatic read-only WinFsp drive and keeps it mounted while
-its window is open. Pack, Extract, Verify and Change Password use the same v2
-core as the CLI; Verify still requires a password because it authenticates the
-full encrypted container.
-
-Passwords entered in the Slint interface are moved into zeroizing operation
-secrets and the visible fields are cleared immediately on submission. Slint may
-internally create framework-managed string copies, so CipherFS does not claim
-that every GUI password-memory copy can be overwritten deterministically.
-
-### Build from Source
+## Build from Source
 
 ```bash
 cargo build --locked --release
@@ -196,66 +219,11 @@ cargo build --locked --release -p cipherfs-windows-shell
 ```
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for crate boundaries and the isolated
-Windows operation-worker protocol.
+Windows operation-worker protocol. The repository pins the Rust toolchain.
+Linux release artifacts target `x86_64-unknown-linux-musl`; Windows artifacts
+target `x86_64-pc-windows-msvc`.
 
-The repository pins the Rust toolchain. Linux release artifacts target
-`x86_64-unknown-linux-musl`; Windows artifacts target
-`x86_64-pc-windows-msvc`.
-
-## Usage
-
-### Pack a Directory
-
-```bash
-./cipherfs pack <source_directory> [output_file] [--threads 0]
-```
-
-CipherFS encrypts independent 4 MiB chunks concurrently. `--threads 0` (the
-default) uses the available CPU parallelism; set a positive value to limit the
-worker count when sharing the machine with other workloads.
-
-### Mount a Container
-
-```bash
-./cipherfs mount <container.cfs> <mount_point> [--cache-mib 64]
-```
-
-The filesystem is mounted read-only. Press **Ctrl+C** to unmount.
-
-On Windows, `<mount_point>` may be a drive such as `X:`, an empty directory, or
-the literal `auto` to select the next free drive letter. Containers with names
-that Windows cannot represent are exposed through deterministic `~cfs-<id>`
-names and reported as warnings; the encrypted container is not modified.
-
-Run `cipherfs licenses` to view the bundled third-party attribution and
-no-warranty notice.
-
-PowerShell users must run `cipherfs.exe`. Windows includes an unrelated command
-named `cipher.exe`; it is not CipherFS. Use `Get-Command cipherfs.exe` when
-checking which executable is on `PATH`.
-
-### Extract a Container
-
-```bash
-./cipherfs extract <container.cfs> <output_dir> [--threads 0]
-```
-
-`<output_dir>` must not exist. Extraction builds a private sibling staging tree,
-authenticates and flushes every file, then installs the complete directory with
-one no-replace atomic rename. Corruption or any pre-commit I/O/name failure
-removes staging and leaves no output directory. Ancestor symlinks, junctions,
-and Windows reparse points are rejected.
-
-### Verify Without Extracting
-
-```bash
-./cipherfs verify <container.cfs> [--threads 0]
-```
-
-This authenticates the v2 header, index, and every encrypted data chunk. Data
-chunks are verified concurrently.
-
-### Performance Notes
+## Performance Notes
 
 - Pack, extract, and verify parallelize v2 chunk cryptography on the CPU.
 - Performance comparisons must use a release build (`cargo build --release` or
