@@ -524,7 +524,7 @@ mod tests {
     use rand::Rng;
     use winfsp::host::MountPoint;
 
-    const CRASH_TEST_NAME: &str = "tests::hard_termination_folder_mount_recovers";
+    const CRASH_TEST_NAME: &str = "tests::runtime_e2e_hard_termination_folder_mount_recovers";
 
     fn random_test_password() -> String {
         let mut value = [0u8; 32];
@@ -578,7 +578,7 @@ mod tests {
 
     #[test]
     #[ignore = "requires the pinned WinFsp runtime"]
-    fn hard_termination_folder_mount_recovers() {
+    fn runtime_e2e_hard_termination_folder_mount_recovers() {
         if std::env::var_os("CIPHERFS_WINFSP_CRASH_CHILD").is_some() {
             let container = std::path::PathBuf::from(
                 std::env::var_os("CIPHERFS_WINFSP_CRASH_CONTAINER").unwrap(),
@@ -659,7 +659,7 @@ mod tests {
     #[test]
     #[ignore = "requires the pinned WinFsp runtime"]
     #[allow(clippy::permissions_set_readonly_false)]
-    fn runtime_mount_reads_files_and_rejects_mutation() {
+    fn runtime_e2e_mount_reads_files_and_rejects_mutation() {
         let _init = initialize_winfsp().expect("WinFsp runtime must be installed for E2E");
         let temp = tempfile::tempdir().unwrap();
         let source = temp.path().join("source");

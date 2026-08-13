@@ -9,16 +9,14 @@ fn main() {
     {
         let kind = args.get(2).and_then(|arg| arg.to_str()).unwrap_or("");
         if let Err(error) = cipherfs_windows_shell::native_dialog_smoke(kind) {
-            eprintln!("{error:#}");
-            if let Some(path) = std::env::var_os("CIPHERFS_SMOKE_ERROR_FILE") {
-                let _ = std::fs::write(path, format!("{error:#}\n"));
-            }
+            report_smoke_error(&error);
             std::process::exit(5);
         }
         return;
     }
     if args.get(1).is_some_and(|arg| arg == "--headless-smoke") {
-        if cipherfs_windows_shell::headless_smoke().is_err() {
+        if let Err(error) = cipherfs_windows_shell::headless_smoke() {
+            report_smoke_error(&error);
             std::process::exit(4);
         }
         return;
@@ -41,6 +39,14 @@ fn main() {
     if let Err(error) = cipherfs_windows_shell::run_application() {
         eprintln!("{error:#}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(windows)]
+fn report_smoke_error(error: &anyhow::Error) {
+    eprintln!("{error:#}");
+    if let Some(path) = std::env::var_os("CIPHERFS_SMOKE_ERROR_FILE") {
+        let _ = std::fs::write(path, format!("{error:#}\n"));
     }
 }
 

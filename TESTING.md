@@ -27,7 +27,9 @@ runs formatting, diff validation, selected-package tests and Clippy only.
 the Linux release CLI/FUSE exercise. `Full` adds the expensive workspace and
 supply-chain gates. The scripts never start WSL, install runtimes or download
 development tools. Core changes include current-platform consumers; frontend
-changes do not test unrelated adapters. CI remains a full two-platform gate.
+changes do not test unrelated adapters. CI remains platform-complete: shared
+Core/Update/CLI/FUSE behavior runs on Linux, while Windows-specific CLI,
+WinFsp, Shell, Slint and native-dialog behavior runs on Windows.
 
 ### What each layer proves
 
@@ -95,9 +97,11 @@ WinFsp-missing download prompt. A managed update must reject a
 changed/truncated executable. Cross-process locking and exhaustive replacement
 rollback testing remain deferred and must not be claimed as completed.
 
-Run `cipherfs-shell.exe --headless-smoke` once with the default renderer and
-once with `SLINT_BACKEND=winit-software`, then run both native-dialog smoke
-commands. On Windows 10 and 11, exercise the
+CI runs `cipherfs-shell.exe --headless-smoke` with
+`SLINT_BACKEND=winit-software`, then runs both native-dialog smoke commands.
+Hosted Windows runners do not provide a stable accelerated desktop, so the
+default FemtoVG renderer is a manual release check on a real Windows desktop.
+On Windows 10 and 11, exercise the
 single Slint window at 100%, 150% and 200% scaling, keyboard focus/activation,
 screen-reader labels, owned native file-picker cancellation, every password
 form, progress and two-stage cancellation, protected commit close handling,

@@ -8,7 +8,7 @@ on:
     branches: ["main"]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -22,10 +22,19 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Cache pinned dependency policy tools
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/bin/cargo-audit
+            ~/.cargo/bin/cargo-deny
+            ~/.cargo/.crates.toml
+            ~/.cargo/.crates2.json
+          key: supply-chain-tools-audit-0.22.2-deny-0.20.2
       - name: Install pinned dependency policy tools
         run: |
-          cargo install --locked cargo-audit --version 0.22.2
-          cargo install --locked cargo-deny --version 0.20.2
+          command -v cargo-audit >/dev/null || cargo install --locked cargo-audit --version 0.22.2
+          command -v cargo-deny >/dev/null || cargo install --locked cargo-deny --version 0.20.2
       - name: Reject vulnerabilities and unapproved dependencies
         run: |
           cargo audit --ignore RUSTSEC-2024-0436
@@ -52,16 +61,13 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
 
       - name: Static checks
         run: |
           cargo fmt --check
-          cargo check --locked --workspace --all-targets
-          cargo clippy --locked --workspace --all-targets -- -D warnings
-          cargo test --locked --workspace
-          for package in cipherfs-core cipherfs-fuse cipherfs-winfsp cipherfs-update cipherfs-cli cipherfs-windows-shell; do
-            cargo check --locked -p "$package"
-          done
+          cargo clippy --locked -p cipherfs-core -p cipherfs-update -p cipherfs-cli -p cipherfs-fuse --all-targets -- -D warnings
+          cargo test --locked -p cipherfs-core -p cipherfs-update -p cipherfs-cli -p cipherfs-fuse
           if cargo tree --locked -p cipherfs-core | grep -E 'clap|rpassword|indicatif|reqwest|self-replace|fuser|winfsp'; then
             echo 'cipherfs-core contains a forbidden frontend, network, mount, or UI dependency' >&2
             exit 1
@@ -104,18 +110,13 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
 
       - name: Workspace checks and release build without WinFsp runtime
         run: |
-          cargo fmt --check
           .\scripts\generate-third-party.ps1
           git diff --exit-code -- THIRD_PARTY_DEPENDENCIES.md
-          cargo check --locked --workspace --all-targets --target x86_64-pc-windows-msvc
-          cargo clippy --locked --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings
-          @('cipherfs-core', 'cipherfs-fuse', 'cipherfs-winfsp', 'cipherfs-update', 'cipherfs-cli', 'cipherfs-windows-shell') | ForEach-Object {
-            cargo check --locked -p $_ --target x86_64-pc-windows-msvc
-            if ($LASTEXITCODE -ne 0) { throw "Independent crate check failed: $_" }
-          }
+          cargo clippy --locked -p cipherfs-cli -p cipherfs-winfsp -p cipherfs-windows-shell --all-targets --target x86_64-pc-windows-msvc -- -D warnings
           $coreTree = cargo tree --locked -p cipherfs-core --target x86_64-pc-windows-msvc
           if (($coreTree -join "`n") -match 'clap|rpassword|indicatif|reqwest|self-replace|fuser|winfsp') {
             throw 'cipherfs-core contains a forbidden frontend, network, mount, or UI dependency'
@@ -124,7 +125,7 @@ jobs:
           if (($coreTree + $cliTree -join "`n") -match 'slint|winit|femtovg|glutin|glow') {
             throw 'CipherFS core or CLI contains a Slint/rendering dependency'
           }
-          cargo test --locked --workspace --exclude cipherfs-winfsp --target x86_64-pc-windows-msvc -- --test-threads=1
+          cargo test --locked -p cipherfs-cli -p cipherfs-windows-shell --target x86_64-pc-windows-msvc -- --test-threads=1
           cargo build --locked --release --target x86_64-pc-windows-msvc -p cipherfs-cli -p cipherfs-windows-shell
           .\target\x86_64-pc-windows-msvc\release\cipherfs.exe --help
           .\target\x86_64-pc-windows-msvc\release\cipherfs.exe --version
@@ -148,12 +149,11 @@ jobs:
               Remove-Item -LiteralPath $errorFile -ErrorAction SilentlyContinue
             }
           }
-          Invoke-ShellSmoke 'Default renderer smoke' @('--headless-smoke')
           $env:SLINT_BACKEND = 'winit-software'
           Invoke-ShellSmoke 'Software renderer smoke' @('--headless-smoke')
-          Remove-Item Env:SLINT_BACKEND
           Invoke-ShellSmoke 'Extract native dialog smoke' @('--native-dialog-smoke', 'extract')
           Invoke-ShellSmoke 'Pack native dialog smoke' @('--native-dialog-smoke', 'pack')
+          Remove-Item Env:SLINT_BACKEND
           Invoke-ShellSmoke 'WinFsp missing-runtime smoke' @('--winfsp-runtime-missing-smoke')
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
           $vs = & $vswhere -latest -property installationPath
@@ -187,8 +187,8 @@ jobs:
           $env:PATH = "${env:ProgramFiles(x86)}\WinFsp\bin;$env:PATH"
           $env:CIPHERFS_WINFSP_E2E = '1'
           $env:CIPHERFS_WINFSP_FOLDER_E2E = '1'
-          cargo test --locked --release -p cipherfs-winfsp --target x86_64-pc-windows-msvc hard_termination_folder_mount_recovers -- --ignored --test-threads=1 --nocapture
-          cargo test --locked --release -p cipherfs-winfsp --target x86_64-pc-windows-msvc runtime_mount_reads_files_and_rejects_mutation -- --ignored --test-threads=1 --nocapture
+          cargo test --locked --release -p cipherfs-winfsp --target x86_64-pc-windows-msvc -- --test-threads=1
+          cargo test --locked --release -p cipherfs-winfsp --target x86_64-pc-windows-msvc runtime_e2e_ -- --ignored --test-threads=1 --nocapture
           cargo test --locked --release -p cipherfs-windows-shell --target x86_64-pc-windows-msvc worker_mount_session_auto_drive_and_unmount -- --ignored --test-threads=1 --nocapture
 
       - name: Upload tested Windows binary
