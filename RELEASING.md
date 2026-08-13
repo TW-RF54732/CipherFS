@@ -40,6 +40,10 @@ after that release is deployed.
    `cargo clippy --locked --workspace --all-targets -- -D warnings`,
    `cargo test --locked --workspace -- --test-threads=1`, the release build, and actual
    folder/drive/`auto` mount smoke including corruption and Ctrl+C unmount.
+   Build the pinned WiX 4.0.6 offline Setup with
+   `scripts/build-windows-installer.ps1`, then run the clean install, repair,
+   upgrade, downgrade rejection, UAC cancellation, files-in-use and uninstall
+   matrix. Confirm WinFsp is retained after CipherFS removal.
 3. On the pinned GitHub Linux runner with FUSE 3 and `musl-tools`, repeat fmt,
    Clippy, tests,
    `cargo build --locked --release --target x86_64-unknown-linux-musl`, and the
@@ -62,14 +66,17 @@ after that release is deployed.
    one real mount on each platform before publishing the draft. Until publish,
    `/releases/latest` and the updater must continue to point at the old release.
 
+Every release note must begin with a short download guide listing, in order:
+`CipherFS-Setup-x64.exe` (recommended Windows),
+`cipherfs-windows-portable-x64.zip`, `cipherfs-linux-x64.tar.gz`, and `cipherfs`
+(direct Linux portable ELF). Signatures, hashes, attestations, raw binaries,
+source and legacy manifests may follow as advanced verification assets.
+
 The tag workflow does not rebuild in the release job. It downloads only the
-Linux and Windows binaries already produced by their runtime-tested jobs,
+Linux binary and Windows binaries/Setup already produced by their runtime-tested jobs,
 packages licenses/source, signs canonical manifests, creates attestations and
 then creates the prerelease or final draft. The Windows release must include
-`cipherfs.exe`, `cipherfs-shell.exe`, the legacy CLI manifest, and the strict
-eight-field integration manifest plus Minisign signatures. Verify both before
-publishing; the latter controls managed two-binary replacement only.
-
-The managed installer/updater remains an isolated but deferred-hardening area:
-do not describe it as fully transactional until install-root locking, active
-operation exclusion, and failure-injection rollback coverage are implemented.
+the Setup, portable ZIP, raw executables, Setup manifest, and legacy CLI and
+integration manifests with Minisign signatures. The legacy manifests are a
+migration bridge for older releases and are not consumed by current Windows
+binaries. Only Linux performs signed in-place self-update.

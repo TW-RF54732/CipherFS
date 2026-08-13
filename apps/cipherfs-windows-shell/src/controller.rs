@@ -4,10 +4,7 @@ use std::path::PathBuf;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Route {
-    Integration,
-    Install,
-    Uninstall,
-    Update,
+    Help,
     Container(PathBuf),
     Pack { source: PathBuf, output: PathBuf },
     Form(FormKind),
@@ -51,7 +48,7 @@ pub(crate) struct AppError {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AppPage {
-    Integration,
+    Help,
     Actions,
     Form,
     Progress,
@@ -93,9 +90,7 @@ pub(crate) struct AppState {
 impl AppState {
     pub fn new(route: Route) -> Self {
         let page = match route {
-            Route::Integration | Route::Install | Route::Uninstall | Route::Update => {
-                AppPage::Integration
-            }
+            Route::Help => AppPage::Help,
             Route::Container(_) => AppPage::Actions,
             Route::Pack { .. } | Route::Form(_) => AppPage::Form,
         };
@@ -178,10 +173,7 @@ mod tests {
 
     #[test]
     fn routes_map_to_expected_pages() {
-        assert_eq!(AppState::new(Route::Integration).page, AppPage::Integration);
-        assert_eq!(AppState::new(Route::Install).page, AppPage::Integration);
-        assert_eq!(AppState::new(Route::Uninstall).page, AppPage::Integration);
-        assert_eq!(AppState::new(Route::Update).page, AppPage::Integration);
+        assert_eq!(AppState::new(Route::Help).page, AppPage::Help);
         assert_eq!(
             AppState::new(Route::Container("vault.cfs".into())).page,
             AppPage::Actions

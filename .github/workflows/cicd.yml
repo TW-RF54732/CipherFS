@@ -188,13 +188,23 @@ jobs:
           cargo test --locked --release -p cipherfs-winfsp --target x86_64-pc-windows-msvc runtime_e2e_ -- --ignored --test-threads=1 --nocapture
           cargo test --locked --release -p cipherfs-windows-shell --target x86_64-pc-windows-msvc worker_mount_session_auto_drive_and_unmount -- --ignored --test-threads=1 --nocapture
 
-      - name: Upload tested Windows binary
+      - name: Build pinned offline Windows Setup
+        shell: pwsh
+        run: |
+          .\scripts\build-windows-installer.ps1 -WinFspMsi (Resolve-Path winfsp.msi)
+          if (-not (Test-Path target\installer\CipherFS-Setup-x64.exe)) {
+            throw 'CipherFS Setup was not produced'
+          }
+          Copy-Item target\installer\CipherFS-Setup-x64.exe target\x86_64-pc-windows-msvc\release\CipherFS-Setup-x64.exe
+
+      - name: Upload tested Windows payloads
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cipherfs-windows-amd64
           path: |
             target/x86_64-pc-windows-msvc/release/cipherfs.exe
             target/x86_64-pc-windows-msvc/release/cipherfs-shell.exe
+            target/x86_64-pc-windows-msvc/release/CipherFS-Setup-x64.exe
           if-no-files-found: error
 
   release:
@@ -229,6 +239,10 @@ jobs:
           chmod +x release/cipherfs
           release/cipherfs --version | grep -F "${cargo_version}"
           release/cipherfs licenses | grep -F 'GNU GENERAL PUBLIC LICENSE'
+          grep -F 'CipherFS-Setup-x64.exe' "release_notes/${GITHUB_REF_NAME}_release.md"
+          grep -F 'cipherfs-windows-portable-x64.zip' "release_notes/${GITHUB_REF_NAME}_release.md"
+          grep -F 'cipherfs-linux-x64.tar.gz' "release_notes/${GITHUB_REF_NAME}_release.md"
+          grep -F '`cipherfs`' "release_notes/${GITHUB_REF_NAME}_release.md"
 
       - name: Build signed release manifest
         env:
@@ -253,12 +267,17 @@ jobs:
           shell_digest="$(sha256sum release/cipherfs-shell.exe | cut -d' ' -f1)"
           printf 'version=%s\ntarget=x86_64-pc-windows-msvc\ncli_asset=cipherfs.exe\ncli_size=%s\ncli_sha256=%s\nshell_asset=cipherfs-shell.exe\nshell_size=%s\nshell_sha256=%s\n' \
             "${version}" "${windows_size}" "${windows_digest}" "${shell_size}" "${shell_digest}" > release/cipherfs-windows-integration.manifest
+          setup_size="$(stat -c '%s' release/CipherFS-Setup-x64.exe)"
+          setup_digest="$(sha256sum release/CipherFS-Setup-x64.exe | cut -d' ' -f1)"
+          printf 'version=%s\ntarget=x86_64-pc-windows-msvc\nasset=CipherFS-Setup-x64.exe\nsize=%s\nsha256=%s\n' \
+            "${version}" "${setup_size}" "${setup_digest}" > release/cipherfs-windows-setup.manifest
           printf '%s' "${MINISIGN_SECRET_KEY}" > release/minisign.key
           chmod 600 release/minisign.key
           trap 'rm -f release/minisign.key' EXIT
           minisign -S -W -s release/minisign.key -m release/cipherfs-linux-amd64.manifest
           minisign -S -W -s release/minisign.key -m release/cipherfs-windows-amd64.manifest
           minisign -S -W -s release/minisign.key -m release/cipherfs-windows-integration.manifest
+          minisign -S -W -s release/minisign.key -m release/cipherfs-windows-setup.manifest
           minisign -Vm release/cipherfs-linux-amd64.manifest \
             -x release/cipherfs-linux-amd64.manifest.minisig \
             -P "${CIPHERFS_MINISIGN_PUBLIC_KEY}"
@@ -268,32 +287,38 @@ jobs:
           minisign -Vm release/cipherfs-windows-integration.manifest \
             -x release/cipherfs-windows-integration.manifest.minisig \
             -P "${CIPHERFS_MINISIGN_PUBLIC_KEY}"
+          minisign -Vm release/cipherfs-windows-setup.manifest \
+            -x release/cipherfs-windows-setup.manifest.minisig \
+            -P "${CIPHERFS_MINISIGN_PUBLIC_KEY}"
           cp LICENSE LICENSE-GPL-3.0 THIRD_PARTY_NOTICES.md THIRD_PARTY_DEPENDENCIES.md VENDORED_WINFSP.md release/
           git archive --format=tar.gz --prefix="cipherfs-${version}/" -o "release/cipherfs-${version}-source.tar.gz" HEAD
-          tar -C release -czf release/cipherfs-linux-amd64.tar.gz cipherfs LICENSE LICENSE-GPL-3.0 THIRD_PARTY_NOTICES.md THIRD_PARTY_DEPENDENCIES.md
-          (cd release && zip cipherfs-windows-amd64.zip cipherfs.exe cipherfs-shell.exe LICENSE LICENSE-GPL-3.0 THIRD_PARTY_NOTICES.md THIRD_PARTY_DEPENDENCIES.md VENDORED_WINFSP.md)
-          (cd release && sha256sum cipherfs cipherfs-linux-amd64.tar.gz > cipherfs-linux-amd64.sha256)
-          (cd release && sha256sum cipherfs.exe cipherfs-shell.exe cipherfs-windows-amd64.zip > cipherfs-windows-amd64.sha256)
-          tar -tzf release/cipherfs-linux-amd64.tar.gz | grep -Fx LICENSE-GPL-3.0
-          unzip -l release/cipherfs-windows-amd64.zip | grep -F LICENSE-GPL-3.0
+          tar -C release -czf release/cipherfs-linux-x64.tar.gz cipherfs LICENSE LICENSE-GPL-3.0 THIRD_PARTY_NOTICES.md THIRD_PARTY_DEPENDENCIES.md
+          (cd release && zip cipherfs-windows-portable-x64.zip cipherfs.exe cipherfs-shell.exe LICENSE LICENSE-GPL-3.0 THIRD_PARTY_NOTICES.md THIRD_PARTY_DEPENDENCIES.md VENDORED_WINFSP.md)
+          (cd release && sha256sum cipherfs cipherfs-linux-x64.tar.gz > cipherfs-linux-x64.sha256)
+          (cd release && sha256sum CipherFS-Setup-x64.exe cipherfs.exe cipherfs-shell.exe cipherfs-windows-portable-x64.zip > cipherfs-windows-x64.sha256)
+          tar -tzf release/cipherfs-linux-x64.tar.gz | grep -Fx LICENSE-GPL-3.0
+          unzip -l release/cipherfs-windows-portable-x64.zip | grep -F LICENSE-GPL-3.0
 
       - name: Attest release artifacts
         uses: actions/attest@36051bcae73b7c2a8a6945a48cbf80953c6baa35 # v4
         with:
           subject-path: |
             release/cipherfs
-            release/cipherfs-linux-amd64.tar.gz
+            release/cipherfs-linux-x64.tar.gz
             release/cipherfs-linux-amd64.manifest
-            release/cipherfs-linux-amd64.sha256
+            release/cipherfs-linux-x64.sha256
+            release/CipherFS-Setup-x64.exe
             release/cipherfs.exe
             release/cipherfs-shell.exe
-            release/cipherfs-windows-amd64.zip
+            release/cipherfs-windows-portable-x64.zip
             release/cipherfs-windows-amd64.manifest
-            release/cipherfs-windows-amd64.sha256
+            release/cipherfs-windows-x64.sha256
+            release/cipherfs-windows-setup.manifest
             release/cipherfs-windows-integration.manifest
             release/cipherfs-linux-amd64.manifest.minisig
             release/cipherfs-windows-amd64.manifest.minisig
             release/cipherfs-windows-integration.manifest.minisig
+            release/cipherfs-windows-setup.manifest.minisig
             release/LICENSE
             release/LICENSE-GPL-3.0
             release/THIRD_PARTY_NOTICES.md
@@ -308,17 +333,20 @@ jobs:
           draft: ${{ !contains(github.ref_name, '-') }}
           body_path: release_notes/${{ github.ref_name }}_release.md
           files: |
+            release/CipherFS-Setup-x64.exe
+            release/cipherfs-windows-portable-x64.zip
+            release/cipherfs-linux-x64.tar.gz
             release/cipherfs
-            release/cipherfs-linux-amd64.tar.gz
             release/cipherfs-linux-amd64.manifest
             release/cipherfs-linux-amd64.manifest.minisig
-            release/cipherfs-linux-amd64.sha256
+            release/cipherfs-linux-x64.sha256
             release/cipherfs.exe
             release/cipherfs-shell.exe
-            release/cipherfs-windows-amd64.zip
             release/cipherfs-windows-amd64.manifest
             release/cipherfs-windows-amd64.manifest.minisig
-            release/cipherfs-windows-amd64.sha256
+            release/cipherfs-windows-x64.sha256
+            release/cipherfs-windows-setup.manifest
+            release/cipherfs-windows-setup.manifest.minisig
             release/cipherfs-windows-integration.manifest
             release/cipherfs-windows-integration.manifest.minisig
             release/LICENSE

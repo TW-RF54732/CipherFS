@@ -150,6 +150,7 @@ This file is generated from the locked Cargo dependency graph by
 | `drm-sys` `0.8.1` | MIT | <https://crates.io/api/v1/crates/drm-sys/0.8.1/download> |
 | `dtor` `0.8.1` | Apache-2.0 OR MIT | <https://crates.io/api/v1/crates/dtor/0.8.1/download> |
 | `either` `1.17.0` | MIT OR Apache-2.0 | <https://crates.io/api/v1/crates/either/1.17.0/download> |
+| `embed-resource` `3.0.11` | MIT | <https://crates.io/api/v1/crates/embed-resource/3.0.11/download> |
 | `encode_unicode` `1.0.0` | Apache-2.0 OR MIT | <https://crates.io/api/v1/crates/encode_unicode/1.0.0/download> |
 | `endi` `1.1.1` | MIT | <https://crates.io/api/v1/crates/endi/1.1.1/download> |
 | `enumflags2` `0.7.12` | MIT OR Apache-2.0 | <https://crates.io/api/v1/crates/enumflags2/0.7.12/download> |
@@ -602,6 +603,8 @@ This file is generated from the locked Cargo dependency graph by
 | `uuid` `1.24.0` | Apache-2.0 OR MIT | <https://crates.io/api/v1/crates/uuid/1.24.0/download> |
 | `v_frame` `0.3.9` | BSD-2-Clause | <https://crates.io/api/v1/crates/v_frame/0.3.9/download> |
 | `version_check` `0.9.5` | MIT/Apache-2.0 | <https://crates.io/api/v1/crates/version_check/0.9.5/download> |
+| `vswhom` `0.1.0` | MIT | <https://crates.io/api/v1/crates/vswhom/0.1.0/download> |
+| `vswhom-sys` `0.1.3` | MIT | <https://crates.io/api/v1/crates/vswhom-sys/0.1.3/download> |
 | `vtable` `0.4.0` | MIT OR Apache-2.0 | <https://crates.io/api/v1/crates/vtable/0.4.0/download> |
 | `vtable-macro` `0.4.0` | MIT OR Apache-2.0 | <https://crates.io/api/v1/crates/vtable-macro/0.4.0/download> |
 | `walkdir` `2.5.0` | Unlicense/MIT | <https://crates.io/api/v1/crates/walkdir/2.5.0/download> |
@@ -683,6 +686,7 @@ This file is generated from the locked Cargo dependency graph by
 | `winfsp-sys` `0.12.1+winfsp-2.1` | GPL-3.0 | <VENDORED_WINFSP.md> |
 | `winit` `0.30.13` | Apache-2.0 | <https://crates.io/api/v1/crates/winit/0.30.13/download> |
 | `winnow` `1.0.2` | MIT | <https://crates.io/api/v1/crates/winnow/1.0.2/download> |
+| `winreg` `0.55.0` | MIT | <https://crates.io/api/v1/crates/winreg/0.55.0/download> |
 | `winx` `0.36.4` | Apache-2.0 WITH LLVM-exception | <https://crates.io/api/v1/crates/winx/0.36.4/download> |
 | `wit-bindgen` `0.51.0` | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | <https://crates.io/api/v1/crates/wit-bindgen/0.51.0/download> |
 | `wit-bindgen` `0.57.1` | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | <https://crates.io/api/v1/crates/wit-bindgen/0.57.1/download> |

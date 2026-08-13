@@ -13,7 +13,9 @@ would be embarrassing or inconvenient if casually viewed.
   point traversal. Extraction has one whole-directory commit point.
 - Users from treating partially decrypted or partially committed files as a
   successful extraction.
-- Automatic updates from unsigned or hash-mismatched release assets.
+- Linux portable automatic updates from unsigned or hash-mismatched release
+  assets. Windows updates are delegated to the offline Setup and are not
+  automatically downloaded or applied by CipherFS.
 
 ## What It Does Not Protect
 

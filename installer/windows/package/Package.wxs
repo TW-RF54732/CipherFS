@@ -1,0 +1,115 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+  <Package
+      Name="CipherFS"
+      Manufacturer="CipherFS"
+      Version="$(var.MsiVersion)"
+      UpgradeCode="{E6A54890-8ABE-414D-949A-B5415E1C87C5}"
+      Scope="perMachine"
+      InstallerVersion="500"
+      Compressed="yes">
+    <SummaryInformation Description="CipherFS machine-wide Windows installation" />
+    <MajorUpgrade
+        DowngradeErrorMessage="A newer version of CipherFS is already installed."
+        Schedule="afterInstallInitialize" />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Property Id="ARPCOMMENTS" Value="CipherFS Setup manages updates and removal. WinFsp is a shared system component and is not removed with CipherFS." />
+    <Property Id="ARPDISPLAYVERSION" Value="$(var.ProductDisplayVersion)" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/TW-RF54732/CipherFS" />
+    <Property Id="ARPSYSTEMCOMPONENT" Value="1" />
+    <Property Id="MSIRESTARTMANAGERCONTROL" Value="Disable" />
+
+    <util:CloseApplication
+        Id="RequireCipherFSCLIClosed"
+        Target="cipherfs.exe"
+        Description="Close CipherFS command-line operations and mounts before continuing."
+        Property="CIPHERFS_CLI_RUNNING"
+        RebootPrompt="no" />
+    <util:CloseApplication
+        Id="RequireCipherFSShellClosed"
+        Target="cipherfs-shell.exe"
+        Description="Close CipherFS Shell operations and mounts before continuing."
+        Property="CIPHERFS_SHELL_RUNNING"
+        RebootPrompt="no" />
+
+    <CustomAction
+        Id="FailIfCipherFSRunning"
+        Error="Close all CipherFS CLI, Shell, worker, and mount sessions before installing, repairing, updating, or removing CipherFS." />
+    <InstallExecuteSequence>
+      <Custom
+          Action="FailIfCipherFSRunning"
+          After="Wix4CloseApplications_X64"
+          Condition="CIPHERFS_CLI_RUNNING OR CIPHERFS_SHELL_RUNNING" />
+    </InstallExecuteSequence>
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="CipherFS" />
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ApplicationProgramsFolder" Name="CipherFS" />
+    </StandardDirectory>
+
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="CipherFSCLI" Guid="{0511DCD7-25F9-4B3B-AAC1-5BFD5C821F2A}">
+        <File Id="CipherFSExe" Source="$(var.PayloadDir)\cipherfs.exe" />
+        <RegistryValue Root="HKLM" Key="Software\CipherFS\Components" Name="CLI" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+      <Component Id="CipherFSShell" Guid="{1EBBB6E2-EE71-4532-9F0A-E353E5820F17}">
+        <File Id="CipherFSShellExe" Source="$(var.PayloadDir)\cipherfs-shell.exe" KeyPath="yes">
+          <Shortcut
+              Id="CipherFSStartMenuShortcut"
+              Directory="ApplicationProgramsFolder"
+              Name="CipherFS Shell"
+              Description="Open CipherFS Shell usage information"
+              Advertise="yes"
+              WorkingDirectory="INSTALLFOLDER" />
+        </File>
+        <RemoveFolder Id="RemoveCipherFSStartMenuFolder" Directory="ApplicationProgramsFolder" On="uninstall" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.cfs" Type="string" Value="CipherFS.Container" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.cfs\OpenWithProgids" Name="CipherFS.Container" Type="string" Value="" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\CipherFS.Container" Type="string" Value="CipherFS encrypted container" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\CipherFS.Container\DefaultIcon" Type="string" Value="[INSTALLFOLDER]cipherfs-app.ico,0" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\CipherFS.Container\shell\open" Name="Icon" Type="string" Value="[INSTALLFOLDER]cipherfs-shell.exe,0" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\CipherFS.Container\shell\open\command" Type="string" Value="&quot;[INSTALLFOLDER]cipherfs-shell.exe&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Directory\shell\CipherFSPack" Type="string" Value="Pack with CipherFS" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Directory\shell\CipherFSPack" Name="Icon" Type="string" Value="[INSTALLFOLDER]cipherfs-shell.exe,0" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Directory\shell\CipherFSPack\command" Type="string" Value="&quot;[INSTALLFOLDER]cipherfs-shell.exe&quot; --pack &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\CipherFS\Components" Name="Shell" Type="integer" Value="1" />
+        <RemoveRegistryKey Id="RemoveLegacyUserProgId" Root="HKCU" Key="Software\Classes\CipherFS.Container" Action="removeOnInstall" />
+        <RemoveRegistryKey Id="RemoveLegacyUserFolderVerb" Root="HKCU" Key="Software\Classes\Directory\shell\CipherFSPack" Action="removeOnInstall" />
+        <RemoveRegistryValue Id="RemoveLegacyUserOpenWith" Root="HKCU" Key="Software\Classes\.cfs\OpenWithProgids" Name="CipherFS.Container" />
+      </Component>
+      <Component Id="WindowsIcons" Guid="{F5F29AD0-8377-4E3D-A391-1A4827C57A3B}">
+        <File Id="CipherFSAppIcon" Source="$(var.RepoRoot)\assets\windows\cipherfs-app.ico" />
+        <RemoveFile Id="RemoveLegacyCfsIcon" Name="cipherfs-cfs.ico" On="both" />
+        <RegistryValue Root="HKLM" Key="Software\CipherFS\Components" Name="WindowsIcons" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+      <Component Id="LicenseFiles" Guid="{C7FB2296-C4FD-441A-8A00-222EF6EBF384}">
+        <File Id="MITLicense" Source="$(var.RepoRoot)\LICENSE" />
+        <File Id="GPLLicense" Source="$(var.RepoRoot)\LICENSE-GPL-3.0" />
+        <File Id="ThirdPartyNotices" Source="$(var.RepoRoot)\THIRD_PARTY_NOTICES.md" />
+        <File Id="ThirdPartyDependencies" Source="$(var.RepoRoot)\THIRD_PARTY_DEPENDENCIES.md" />
+        <File Id="VendoredWinFsp" Source="$(var.RepoRoot)\VENDORED_WINFSP.md" />
+        <RegistryValue Root="HKLM" Key="Software\CipherFS\Components" Name="Licenses" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+      <Component Id="SystemPath" Guid="*">
+        <RegistryValue Root="HKLM" Key="Software\CipherFS" Name="InstallPath" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+        <Environment Id="CipherFSSystemPath" Name="PATH" Value="[INSTALLFOLDER]" Part="last" Action="set" System="yes" />
+      </Component>
+      <Component Id="InstallFolderCleanup" Guid="*">
+        <RemoveFolder Id="RemoveCipherFSInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
+        <RegistryValue Root="HKLM" Key="Software\CipherFS\Components" Name="InstallFolder" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <Feature Id="Complete" Title="CipherFS" Level="1">
+      <ComponentRef Id="CipherFSCLI" />
+      <ComponentRef Id="CipherFSShell" />
+      <ComponentRef Id="WindowsIcons" />
+      <ComponentRef Id="LicenseFiles" />
+      <ComponentRef Id="SystemPath" />
+      <ComponentRef Id="InstallFolderCleanup" />
+    </Feature>
+  </Package>
+</Wix>

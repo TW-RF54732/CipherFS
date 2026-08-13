@@ -1,0 +1,46 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+  <Bundle
+      Name="CipherFS"
+      Manufacturer="CipherFS"
+      Version="$(var.ProductVersion)"
+      UpgradeCode="{40636426-6175-4A5E-87FB-CDA4A23A0BF6}"
+      Compressed="yes"
+      IconSourceFile="$(var.SetupIcon)"
+      AboutUrl="https://github.com/TW-RF54732/CipherFS"
+      HelpUrl="https://github.com/TW-RF54732/CipherFS/issues">
+    <BootstrapperApplication>
+      <bal:WixStandardBootstrapperApplication
+          Theme="hyperlinkLicense"
+          LicenseUrl="https://github.com/TW-RF54732/CipherFS/blob/main/LICENSE"
+          ShowVersion="yes"
+          SuppressOptionsUI="yes"
+          SuppressDowngradeFailure="no" />
+    </BootstrapperApplication>
+
+    <util:ProductSearch
+        Id="WinFspSearch"
+        Variable="WinFspVersion"
+        UpgradeCode="{5466A3D8-3AA1-4240-B6A0-3A051940A3EC}"
+        Result="version" />
+
+    <Chain>
+      <MsiPackage
+          Id="WinFsp"
+          SourceFile="$(var.WinFspMsi)"
+          Compressed="yes"
+          Permanent="yes"
+          Vital="yes"
+          InstallCondition="WinFspVersion &lt; v2.1.25156" />
+      <MsiPackage
+          Id="CipherFS"
+          SourceFile="$(var.CipherFSMsi)"
+          Compressed="yes"
+          Vital="yes"
+          Visible="no">
+        <MsiProperty Name="ARPSYSTEMCOMPONENT" Value="1" />
+      </MsiPackage>
+    </Chain>
+  </Bundle>
+</Wix>

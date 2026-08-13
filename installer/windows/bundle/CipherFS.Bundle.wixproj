@@ -1,0 +1,12 @@
+<Project Sdk="WixToolset.Sdk/4.0.6">
+  <PropertyGroup>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <OutputType>Bundle</OutputType>
+    <OutputName>CipherFS-Setup-x64</OutputName>
+    <DefineConstants>CipherFSMsi=$(CipherFSMsi);WinFspMsi=$(WinFspMsi);ProductVersion=$(ProductVersion);SetupIcon=$(SetupIcon)</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="WixToolset.Bal.wixext" Version="4.0.6" />
+    <PackageReference Include="WixToolset.Util.wixext" Version="4.0.6" />
+  </ItemGroup>
+</Project>

@@ -11,18 +11,18 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 cipherfs-core = { path = "../../crates/cipherfs-core" }
-cipherfs-update = { path = "../../crates/cipherfs-update" }
 clap.workspace = true
 ctrlc.workspace = true
 indicatif.workspace = true
-hex.workspace = true
-rand.workspace = true
 rpassword.workspace = true
-self-replace.workspace = true
 zeroize.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 cipherfs-fuse = { path = "../../crates/cipherfs-fuse" }
+cipherfs-update = { path = "../../crates/cipherfs-update" }
+hex.workspace = true
+rand.workspace = true
+self-replace.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 cipherfs-winfsp = { path = "../../crates/cipherfs-winfsp" }

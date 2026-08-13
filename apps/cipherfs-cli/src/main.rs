@@ -8,8 +8,11 @@ use cipherfs_core::{ExtractOptions, ExtractRequest, PackOptions, PackRequest};
 use cipherfs_core::{VerifyOptions, VerifyRequest};
 use clap::{Parser, Subcommand};
 use indicatif::{ProgressBar, ProgressStyle};
+#[cfg(unix)]
 use rand::Rng;
+#[cfg(unix)]
 use std::fs::OpenOptions;
+#[cfg(unix)]
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -75,7 +78,7 @@ enum Commands {
         #[arg(long, default_value_t = 0, value_parser = parse_threads)]
         threads: usize,
     },
-    /// Install the latest release only after Minisign verification
+    /// Update the Linux portable binary; Windows updates use CipherFS Setup
     Update,
     /// Show CipherFS and third-party licensing notices
     Licenses,
@@ -397,14 +400,17 @@ fn mount_filesystem(
     Ok(())
 }
 
+#[cfg(unix)]
 struct TempUpdate(PathBuf);
 
+#[cfg(unix)]
 impl Drop for TempUpdate {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.0);
     }
 }
 
+#[cfg(unix)]
 fn update_interactive() -> Result<()> {
     let Some(update) = cipherfs_update::download_portable_update()? else {
         println!(
@@ -460,6 +466,15 @@ fn update_interactive() -> Result<()> {
     Ok(())
 }
 
+#[cfg(windows)]
+fn update_interactive() -> Result<()> {
+    println!(
+        "[Info] Windows updates are installed with CipherFS-Setup-x64.exe.\n[Info] Download the latest Setup from https://github.com/TW-RF54732/CipherFS/releases/latest"
+    );
+    Ok(())
+}
+
+#[cfg(any(unix, test))]
 fn terminal_safe(text: &str) -> String {
     text.chars()
         .filter(|character| *character == '\n' || *character == '\t' || !character.is_control())
@@ -473,19 +488,9 @@ fn set_executable(path: &Path) -> Result<()> {
     Ok(())
 }
 
-#[cfg(windows)]
-fn set_executable(_path: &Path) -> Result<()> {
-    Ok(())
-}
-
 #[cfg(unix)]
 fn sync_parent(path: &Path) -> Result<()> {
     std::fs::File::open(path)?.sync_all()?;
-    Ok(())
-}
-
-#[cfg(windows)]
-fn sync_parent(_path: &Path) -> Result<()> {
     Ok(())
 }
 

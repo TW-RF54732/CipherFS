@@ -11,6 +11,12 @@ non-mount commands start without the WinFsp runtime installed.
 - Binding project: <https://github.com/SnowflakePowered/winfsp-rs>
 - WinFsp runtime/API version: 2.1
 - Upstream WinFsp: <https://github.com/winfsp/winfsp/releases/tag/v2.1>
+- Offline Setup payload: `winfsp-2.1.25156.msi`
+- Offline Setup payload SHA-256:
+  `073A70E00F77423E34BED98B86E600DEF93393BA5822204FAC57A29324DB9F7A`
+- Setup installs this official MSI machine-wide only when a compatible or newer
+  WinFsp is not detected. It never downgrades WinFsp and leaves the shared
+  runtime installed when CipherFS is removed.
 - Local modification: `build.rs` copies `src/bindings.rs` instead of invoking
   bindgen; unused bindgen build dependencies are removed. Generated bindings,
   headers and import libraries are otherwise retained from the crate archive.

@@ -1,0 +1,11 @@
+<Project Sdk="WixToolset.Sdk/4.0.6">
+  <PropertyGroup>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <OutputName>CipherFS</OutputName>
+    <DefineConstants>PayloadDir=$(PayloadDir);RepoRoot=$(RepoRoot);MsiVersion=$(MsiVersion);ProductDisplayVersion=$(ProductDisplayVersion)</DefineConstants>
+    <SuppressIces>ICE91</SuppressIces>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="WixToolset.Util.wixext" Version="4.0.6" />
+  </ItemGroup>
+</Project>

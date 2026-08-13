@@ -3,7 +3,6 @@
 mod app;
 mod controller;
 mod dialogs;
-mod integration;
 mod mount_controller;
 mod operation_controller;
 pub mod protocol;

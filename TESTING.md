@@ -90,16 +90,29 @@ boundary. After installation, add the official WinFsp `bin` directory to
 `PATH` and run that package's runtime tests. The final CLI and shell binaries
 are independently checked for delay-load imports before installation.
 
-Also build `cipherfs-shell.exe`. In a disposable current-user profile, verify
-that Install writes only `%LOCALAPPDATA%\Programs\CipherFS` and HKCU Classes
-entries, does not change `UserChoice`, registers quoted `.cfs` and directory
-commands, and Uninstall removes only CipherFS-owned registration. Confirm that
-the Windows 11 folder verb is present under **Show more options**. Exercise
+Also build `cipherfs-shell.exe` and `CipherFS-Setup-x64.exe`. On a disposable
+clean VM, verify that Setup installs CipherFS to `%ProgramFiles%\CipherFS`,
+adds the system `PATH`, writes only CipherFS-owned HKLM Classes entries, does
+not change `UserChoice`, and registers quoted `.cfs` and directory commands.
+Confirm the Shell executable, Setup, Start Menu shortcut, `.cfs` files, the
+`.cfs` Open command and **Pack with CipherFS** menu all display the same
+transparent, multi-size CipherFS cube icon at small, medium and large Explorer
+scales.
+Test with WinFsp absent, the pinned version present, and a newer compatible
+version present; Setup must install only the missing pinned runtime and must
+never downgrade a newer one. Confirm that the Windows 11 folder verb is present
+under **Show more options**. Exercise
 mount/open/unmount, safe and forced worker cancellation cleanup for
 Pack/Extract/Verify, wrong password, existing extraction destination and the
-WinFsp-missing download prompt. A managed update must reject a
-changed/truncated executable. Cross-process locking and exhaustive replacement
-rollback testing remain deferred and must not be claimed as completed.
+WinFsp-missing recovery. Verify same-version repair, major upgrade, downgrade
+rejection, UAC cancellation, damaged embedded payload failure, and files-in-use
+handling without forced termination. Uninstall must remove CipherFS files,
+system `PATH`, shortcuts and Registry entries while retaining WinFsp.
+
+Extract `cipherfs-windows-portable-x64.zip` in a clean profile and verify both
+executables run without creating `PATH`, Registry, Explorer, or Installed apps
+state. `cipherfs update` on Windows must only print the Setup download guidance
+and must not create a replacement or temporary update file.
 
 CI runs `cipherfs-shell.exe --headless-smoke` with
 `SLINT_BACKEND=winit-software`, then runs both native-dialog smoke commands.
@@ -117,10 +130,10 @@ single-threaded. The harness covers folder paths with a trailing separator,
 explicit and automatic drive letters, empty directories, a 4 MiB boundary,
 read-only mutations, exact corruption failure and clean unmount. Junction tests
 verify that extraction and directory mounts do not traverse reparse ancestors.
-The updater suite also runs a copied test executable and replaces it while it
-is executing, then verifies the installed bytes from the parent process.
-It additionally validates the strict eight-field Windows integration manifest;
-the legacy five-field portable CLI manifest remains separately compatible.
+The Linux updater suite also runs a copied test executable and replaces it
+while it is executing, then verifies the installed bytes from the parent
+process. The legacy Windows manifests remain published only as a migration
+bridge for older Shell-managed installations.
 
 ## Linux runtime
 
@@ -152,8 +165,9 @@ or Explorer policy surfaces. Before release, use the release shell and record:
 3. Recursively compare a successful extraction with its source.
 4. Exercise Tab, Shift+Tab, Enter, Escape, close overlays, Narrator labels and
    100%, 150% and 200% DPI.
-5. Exercise Explorer context menus, `.cfs` double-click, install/repair/update/
-   uninstall and the WinFsp-missing recovery link.
+5. Exercise Explorer context menus and `.cfs` double-click. Run Setup install,
+   repair, upgrade and uninstall, including UAC cancellation and files-in-use;
+   confirm WinFsp remains after CipherFS removal.
 
 Compilation, Clippy, unit tests or component construction alone must never be
 reported as successful Windows native interaction.

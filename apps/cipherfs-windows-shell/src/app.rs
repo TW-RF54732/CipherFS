@@ -1,4 +1,4 @@
-//! Slint application routing. Windows-owned dialogs and shell integration remain in Win32.
+//! Slint application routing. Windows-owned file dialogs and launching remain in Win32.
 
 use crate::AppWindow;
 use crate::controller::{AppAction, AppState, DialogOutcome, FormKind, Route};
@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use windows::Win32::Foundation::HWND;
 use zeroize::{Zeroize, Zeroizing};
 
-const INTEGRATION: i32 = 0;
+const HELP: i32 = 0;
 const ACTIONS: i32 = 1;
 const FORM: i32 = 2;
 const PROGRESS: i32 = 3;
@@ -26,7 +26,6 @@ struct RuntimeState {
     controller: Mutex<AppState>,
     operation: Mutex<Option<Arc<OperationHandle>>>,
     mount: Mutex<Option<MountWorker>>,
-    prepared_update: Mutex<Option<crate::integration::PreparedUpdate>>,
 }
 
 impl RuntimeState {
@@ -36,7 +35,6 @@ impl RuntimeState {
             controller: Mutex::new(AppState::new(route)),
             operation: Mutex::new(None),
             mount: Mutex::new(None),
-            prepared_update: Mutex::new(None),
         }
     }
 }
@@ -47,26 +45,13 @@ pub fn run() -> Result<()> {
     let state = Arc::new(RuntimeState::new(route.clone()));
     configure_callbacks(&ui, Arc::clone(&state));
     show_route(&ui, &route)?;
-    if matches!(route, Route::Update) {
-        prepare_update(&ui, &state)?;
-    } else if matches!(route, Route::Install) {
-        run_background(&ui, "Installing Windows integration...", move || {
-            crate::integration::install()?;
-            Ok("Windows integration installed for this user.".into())
-        })?;
-    } else if matches!(route, Route::Uninstall) {
-        run_background(&ui, "Removing Windows integration...", move || {
-            crate::integration::uninstall()?;
-            Ok("Explorer integration was removed.".into())
-        })?;
-    }
     ui.run().context("CipherFS Slint event loop failed")
 }
 
 pub fn headless_smoke() -> Result<()> {
     let ui = AppWindow::new().context("Unable to initialize the Slint UI")?;
     ui.show().context("Unable to show the Slint smoke window")?;
-    let pages = [INTEGRATION, ACTIONS, FORM, PROGRESS, MOUNTED, RESULT, ERROR];
+    let pages = [HELP, ACTIONS, FORM, PROGRESS, MOUNTED, RESULT, ERROR];
     let index = std::rc::Rc::new(std::cell::Cell::new(0usize));
     let timer = slint::Timer::default();
     let weak = ui.as_weak();
@@ -159,13 +144,14 @@ fn parse_route() -> Result<Route> {
     let mut args = std::env::args_os();
     let _ = args.next();
     match args.next() {
-        None => Ok(Route::Integration),
-        Some(value) if value == "install" => Ok(Route::Install),
-        Some(value) if value == "uninstall" => Ok(Route::Uninstall),
-        Some(value) if value == "update" => Ok(Route::Update),
-        Some(value) if value == "--apply-update" => {
-            crate::integration::apply_staged_update(args)?;
-            Ok(Route::Integration)
+        None => Ok(Route::Help),
+        Some(value)
+            if matches!(
+                value.to_str(),
+                Some("install" | "uninstall" | "update" | "--apply-update")
+            ) =>
+        {
+            Ok(Route::Help)
         }
         Some(value) if value == "--pack" => {
             let source = PathBuf::from(args.next().context("--pack requires a directory")?);
@@ -328,33 +314,16 @@ fn configure_callbacks(ui: &AppWindow, state: Arc<RuntimeState>) {
 fn show_route(ui: &AppWindow, route: &Route) -> Result<()> {
     clear_secrets(ui);
     match route {
-        Route::Integration | Route::Install | Route::Uninstall | Route::Update => {
-            let installed = crate::integration::install_root()?
-                .join("cipherfs-shell.exe")
-                .is_file();
-            ui.set_page(INTEGRATION);
-            ui.set_heading("Windows integration".into());
+        Route::Help => {
+            ui.set_page(HELP);
+            ui.set_heading("CipherFS Shell".into());
             ui.set_detail(
-                "Per-user Explorer integration. CipherFS does not install the WinFsp driver."
+                "Open a .cfs container or use Pack with CipherFS in Explorer. Windows installation, repair, updates, and removal are managed by CipherFS Setup."
                     .into(),
             );
-            ui.set_primary_label(
-                if installed {
-                    "Repair integration"
-                } else {
-                    "Install Windows integration"
-                }
-                .into(),
-            );
-            ui.set_secondary_label(
-                if installed {
-                    "Check for update"
-                } else {
-                    "Close"
-                }
-                .into(),
-            );
-            ui.set_tertiary_label(if installed { "Uninstall" } else { "" }.into());
+            ui.set_primary_label("Close".into());
+            ui.set_secondary_label("".into());
+            ui.set_tertiary_label("".into());
             ui.set_quaternary_label("".into());
         }
         Route::Container(path) => {
@@ -438,12 +407,7 @@ fn primary(ui: &AppWindow, state: &Arc<RuntimeState>) -> Result<()> {
     {
         return crate::dialogs::open_explorer(m.path());
     }
-    if ui.get_page() == RESULT {
-        if let Some(update) = state.prepared_update.lock().unwrap().take() {
-            crate::integration::launch_prepared_update(update)?;
-            slint::quit_event_loop()?;
-            return Ok(());
-        }
+    if ui.get_page() == RESULT || ui.get_page() == HELP {
         slint::quit_event_loop()?;
         return Ok(());
     }
@@ -461,12 +425,7 @@ fn primary(ui: &AppWindow, state: &Arc<RuntimeState>) -> Result<()> {
         .clone()
         .context("route missing")?;
     match route {
-        Route::Integration | Route::Install | Route::Uninstall | Route::Update => {
-            run_background(ui, "Updating Windows integration...", move || {
-                crate::integration::install()?;
-                Ok("Windows integration installed for this user.".into())
-            })
-        }
+        Route::Help => Ok(()),
         Route::Container(path) => set_form(ui, state, FormKind::Mount(path)),
         Route::Pack { source, output } => submit(ui, state, FormKind::Pack { source, output }),
         Route::Form(kind) => submit(ui, state, kind),
@@ -494,15 +453,7 @@ fn secondary(ui: &AppWindow, state: &Arc<RuntimeState>) -> Result<()> {
         .clone()
         .context("route missing")?;
     match route {
-        Route::Integration | Route::Install | Route::Uninstall | Route::Update
-            if ui.get_secondary_label().as_str() == "Close" =>
-        {
-            slint::quit_event_loop()?;
-            Ok(())
-        }
-        Route::Integration | Route::Install | Route::Uninstall | Route::Update => {
-            prepare_update(ui, state)
-        }
+        Route::Help => Ok(()),
         Route::Container(path) => {
             let name = path
                 .file_stem()
@@ -552,7 +503,7 @@ fn secondary(ui: &AppWindow, state: &Arc<RuntimeState>) -> Result<()> {
                 Route::Form(FormKind::Extract { container, .. }) => {
                     Route::Container(container.clone())
                 }
-                _ => Route::Integration,
+                _ => Route::Help,
             };
             *state.route.lock().unwrap() = Some(back.clone());
             show_route(ui, &back)
@@ -568,12 +519,7 @@ fn tertiary(ui: &AppWindow, state: &Arc<RuntimeState>) -> Result<()> {
         .clone()
         .context("route missing")?;
     match route {
-        Route::Integration | Route::Install | Route::Uninstall | Route::Update => {
-            run_background(ui, "Removing Windows integration...", move || {
-                crate::integration::uninstall()?;
-                Ok("Explorer integration was removed.".into())
-            })
-        }
+        Route::Help => Ok(()),
         Route::Container(path) => set_form(ui, state, FormKind::Verify(path)),
         _ => Ok(()),
     }
@@ -871,54 +817,6 @@ fn start_mount(
                     .transition(AppAction::MountFailed(text.clone()));
                 let _ = weak.upgrade_in_event_loop(move |ui| show_error(&ui, &text));
             }
-        }
-    });
-    Ok(())
-}
-
-fn prepare_update(ui: &AppWindow, state: &Arc<RuntimeState>) -> Result<()> {
-    ui.set_page(PROGRESS);
-    ui.set_heading("Checking for update".into());
-    ui.set_detail("Downloading and verifying the signed Windows integration...".into());
-    ui.set_cancel_enabled(false);
-    let weak = ui.as_weak();
-    let s = Arc::clone(state);
-    std::thread::spawn(move || match crate::integration::prepare_update() {
-        Ok(p) => {
-            let v = p.version.to_string();
-            *s.prepared_update.lock().unwrap() = Some(p);
-            let _ = weak.upgrade_in_event_loop(move |ui| {
-                ui.set_page(RESULT);
-                ui.set_heading("Verified update ready".into());
-                ui.set_detail(format!("CipherFS {v} is staged and verified.").into());
-                ui.set_primary_label("Close and install".into());
-                ui.set_secondary_label("Not now".into());
-            });
-        }
-        Err(e) => {
-            let t = format!("{e:#}");
-            let _ = weak.upgrade_in_event_loop(move |ui| show_error(&ui, &t));
-        }
-    });
-    Ok(())
-}
-
-fn run_background(
-    ui: &AppWindow,
-    title: &str,
-    task: impl FnOnce() -> Result<String> + Send + 'static,
-) -> Result<()> {
-    ui.set_page(PROGRESS);
-    ui.set_heading(title.into());
-    ui.set_cancel_enabled(false);
-    let weak = ui.as_weak();
-    std::thread::spawn(move || match task() {
-        Ok(m) => {
-            let _ = weak.upgrade_in_event_loop(move |ui| show_result(&ui, &m));
-        }
-        Err(e) => {
-            let t = format!("{e:#}");
-            let _ = weak.upgrade_in_event_loop(move |ui| show_error(&ui, &t));
         }
     });
     Ok(())

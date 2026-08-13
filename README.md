@@ -92,16 +92,15 @@ experimental status and limitations described above.
 <details open>
 <summary><strong>Windows: recommended Shell and Explorer workflow</strong></summary>
 
-1. Download and unzip `cipherfs-windows-amd64.zip` from
+1. Download `CipherFS-Setup-x64.exe` from
    [GitHub Releases](https://github.com/TW-RF54732/CipherFS/releases).
-2. Install the official [WinFsp 2.1 runtime](https://winfsp.dev/rel/). This is
-   required to mount containers; installing it first keeps the full Shell
-   workflow available. CipherFS does not install or rebrand the driver.
-3. Run `cipherfs-shell.exe`, then choose **Install Windows integration**. This
-   copies both executables to `%LOCALAPPDATA%\Programs\CipherFS` and registers
-   the current-user Explorer integration; no administrator rights, service, or
-   MSIX package is used.
-4. In Explorer, right-click a folder and select **Pack with CipherFS**. On
+2. Run Setup. It installs CipherFS machine-wide in `Program Files`, adds the
+   CLI to the system `PATH`, and registers Explorer integration. The offline
+   Setup contains the pinned official WinFsp 2.1 MSI and installs it only when
+   no compatible or newer WinFsp is present. Windows therefore requests
+   administrator approval. CipherFS is currently unsigned, so Windows may show
+   **Unknown publisher**.
+3. In Explorer, right-click a folder and select **Pack with CipherFS**. On
    Windows 11, find this command under **Show more options**. To open an
    existing container, double-click its `.cfs` file and choose **Mount**,
    **Extract**, **Verify**, or **Change password**.
@@ -111,15 +110,17 @@ mounted while the Shell window is open; choose **Unmount** before closing it.
 Pack, Extract, Verify, and Change Password work without WinFsp, but Verify
 still asks for a password because it authenticates the complete container.
 
-Run the Shell again to repair, update, or uninstall the integration. It adds an
-Open With handler without changing Windows `UserChoice` defaults.
+Run the same Setup again to repair or update CipherFS. Remove CipherFS through
+Windows **Installed apps**; WinFsp is retained because other applications may
+use that shared system component. Setup does not change Windows `UserChoice`
+defaults.
 </details>
 
 <details>
 <summary><strong>Linux or Windows: CLI workflow</strong></summary>
 
 On Linux, install FUSE 3 and its development package with your distribution's
-package manager before using `mount`. Download `cipherfs-linux-amd64.tar.gz`
+package manager before using `mount`. Download `cipherfs-linux-x64.tar.gz`
 from [GitHub Releases](https://github.com/TW-RF54732/CipherFS/releases), extract
 it, and make the binary executable:
 
@@ -127,10 +128,11 @@ it, and make the binary executable:
 chmod +x cipherfs
 ```
 
-On Windows, unzip `cipherfs-windows-amd64.zip` and run `cipherfs.exe` from
-PowerShell. Windows has an unrelated `cipher.exe` command; use
-`Get-Command cipherfs.exe` if you need to verify the selected executable.
-Windows CLI mounting also requires the official WinFsp 2.1 runtime.
+On Windows, Setup makes `cipherfs.exe` available in new terminals. The
+`cipherfs-windows-portable-x64.zip` alternative is for advanced portable use:
+unzip it and run `cipherfs.exe` from that directory. Portable mode never writes
+`PATH`, Registry, Explorer integration, or an Installed apps entry. Windows has
+an unrelated `cipher.exe` command; use `Get-Command cipherfs.exe` if needed.
 
 Use the same commands on Linux and Windows; replace `./cipherfs` with
 `./cipherfs.exe` in PowerShell:
@@ -175,7 +177,8 @@ interpreted as proof that the overall system is secure.
 - Packs a directory into an encrypted container.
 - Mounts a container read-only through FUSE on Linux or WinFsp on Windows.
 - Extracts files from a container without mounting it.
-- Includes a self-update command for GitHub releases.
+- Includes signed in-place self-update for the Linux portable binary. On
+  Windows, the compatible `update` command only directs users to Setup.
 
 ### Experimental Duress Password
 
@@ -244,33 +247,33 @@ target `x86_64-pc-windows-msvc`.
   transferring 4 MiB chunks through GPU memory adds portability, driver, and
   plaintext-exposure costs that need measured benefits before adoption.
 
-### Install a Signed Update
+### Updates
 
 ```bash
 ./cipherfs update
 ```
 
-Official release builds contain a Minisign public key. The updater refuses to
-replace itself unless the release manifest signature, version, target, file
+On Linux, official release builds contain a Minisign public key. The updater
+refuses to replace itself unless the manifest signature, version, target, file
 size, and SHA-256 digest all match. Source builds without an embedded trusted
 key intentionally disable automatic replacement.
+
+On Windows, `cipherfs update` does not modify files. Download and run the newest
+`CipherFS-Setup-x64.exe`; Setup performs repair or a major upgrade. Portable ZIP
+users replace their extracted files manually.
 
 ## Platform Support
 
 - Linux x86-64 with FUSE 3
-- Windows x86-64 with the separately installed WinFsp 2.1 runtime
+- Windows x86-64 with the machine-wide WinFsp 2.1 runtime
 
-Windows releases are portable and may trigger SmartScreen because CipherFS does
-not currently have an Authenticode certificate. Release manifests remain
-Minisign-signed and include SHA-256 hashes.
-
-Managed Windows integration updates are opt-in. They download and verify a
-separate Minisign-signed manifest containing the names, sizes and SHA-256
-digests of both Windows executables. The portable CLI continues to use its
-original single-binary update manifest. The current managed installer/updater
-is isolated in the Windows shell crate, but cross-process locking and fully
-transactional replacement/rollback remain deferred work; do not update while
-CipherFS operations or mounts are active.
+The recommended Windows release is the machine-wide offline Setup; a portable
+ZIP is also provided. Neither currently has an Authenticode certificate, so
+SmartScreen may identify an unknown publisher. Release manifests remain
+Minisign-signed and SHA-256 hashes and Artifact Attestations are published as
+advanced verification material. Do not run Setup while CipherFS operations or
+mounts are active; Setup reports files in use instead of forcibly terminating
+them.
 
 CipherFS stores file contents, names and directory structure. It does not
 preserve platform ACLs, ownership, timestamps, xattrs, alternate data streams,
