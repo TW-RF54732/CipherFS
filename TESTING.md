@@ -128,7 +128,10 @@ After installing the pinned official WinFsp 2.1 MSI, set
 `CIPHERFS_WINFSP_E2E=1` and `CIPHERFS_WINFSP_FOLDER_E2E=1`, then run the tests
 single-threaded. The harness covers folder paths with a trailing separator,
 explicit and automatic drive letters, empty directories, a 4 MiB boundary,
-read-only mutations, exact corruption failure and clean unmount. Junction tests
+read-only mutations, exact corruption failure and clean unmount. It also mounts
+two containers with the same filename and different content on the same drive
+letter, then verifies distinct volume and Shell `PKEY_ThumbnailCacheId` values
+without clearing the global thumbnail cache. Junction tests
 verify that extraction and directory mounts do not traverse reparse ancestors.
 The Linux updater suite also runs a copied test executable and replaces it
 while it is executing, then verifies the installed bytes from the parent
@@ -168,6 +171,10 @@ or Explorer policy surfaces. Before release, use the release shell and record:
 5. Exercise Explorer context menus and `.cfs` double-click. Run Setup install,
    repair, upgrade and uninstall, including UAC cancellation and files-in-use;
    confirm WinFsp remains after CipherFS removal.
+6. In Explorer large-icon view, open a container containing `photo.jpg`, unmount
+   it, then mount a different container with different `photo.jpg` content on
+   the same drive letter without clearing thumbnails. The second thumbnail must
+   update immediately; remounting the first container must restore its thumbnail.
 
 Compilation, Clippy, unit tests or component construction alone must never be
 reported as successful Windows native interaction.

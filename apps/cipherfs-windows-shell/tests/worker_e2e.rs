@@ -6,6 +6,15 @@ use cipherfs_windows_shell::protocol::{
 };
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use windows::Win32::Foundation::PROPERTYKEY;
+use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
+use windows::Win32::UI::Shell::{IShellItem2, SHCreateItemFromParsingName};
+use windows::core::{GUID, HSTRING};
+
+const PKEY_THUMBNAIL_CACHE_ID: PROPERTYKEY = PROPERTYKEY {
+    fmtid: GUID::from_u128(0x446d16b1_8dad_4870_a748_402ea43d788c),
+    pid: 100,
+};
 
 fn spawn() -> (Child, ChildStdin, ChildStdout) {
     let mut child = Command::new(env!("CARGO_BIN_EXE_cipherfs-shell"))
@@ -84,6 +93,12 @@ fn read_terminal(output: &mut ChildStdout) -> (Vec<(Phase, u64)>, WorkerEvent) {
             _ => {}
         }
     }
+}
+
+fn thumbnail_cache_id(path: &Path) -> u64 {
+    let path = HSTRING::from(path.as_os_str());
+    let item: IShellItem2 = unsafe { SHCreateItemFromParsingName(&path, None).unwrap() };
+    unsafe { item.GetUInt64(&PKEY_THUMBNAIL_CACHE_ID).unwrap() }
 }
 
 #[test]
@@ -365,70 +380,70 @@ fn unknown_protocol_version_exits_without_echoing_password() {
 #[test]
 #[ignore = "requires the pinned WinFsp runtime and a free drive letter"]
 fn worker_mount_session_auto_drive_and_unmount() {
+    unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok().unwrap() };
     let temp = tempfile::tempdir().unwrap();
-    let source = temp.path().join("source");
-    let container = temp.path().join("vault.cfs");
-    std::fs::create_dir(&source).unwrap();
-    std::fs::write(source.join("read-only.txt"), b"mounted through worker").unwrap();
-    let cancellation = cipherfs_core::operation::CancellationToken::default();
-    let reporter = cipherfs_core::operation::NoProgress;
-    cipherfs_core::pack(
-        cipherfs_core::PackRequest {
-            source: &source,
-            output: &container,
-            password: "worker-mount-password",
-            duress_password: None,
-            options: cipherfs_core::PackOptions {
-                argon2_m_cost: cipherfs_core::MIN_ARGON_MEMORY_KIB,
-                argon2_t_cost: 1,
-                argon2_p_cost: 1,
-                max_index_size: cipherfs_core::MAX_INDEX_SIZE,
-                threads: 1,
-                temporary_path: None,
-            },
-        },
-        cipherfs_core::operation::OperationControl::new(&cancellation, &reporter),
-    )
-    .unwrap();
-
-    let (mut child, mut input, mut output) = spawn();
-    write_frame(
-        &mut input,
-        &WorkerRequest {
-            version: PROTOCOL_VERSION,
-            operation: WorkerOperation::Mount {
-                container,
-                password: Secret::new("worker-mount-password"),
-            },
-        },
-    )
-    .unwrap();
-    let mounted = loop {
-        match read_frame::<_, WorkerEvent>(&mut output).unwrap().unwrap() {
-            WorkerEvent::Mounted { path } => break path,
-            WorkerEvent::Failed { message, .. } => panic!("mount worker failed: {message}"),
-            _ => {}
-        }
-    };
-    assert_eq!(mounted.as_os_str().to_string_lossy().len(), 2);
-    assert_eq!(
-        mounted.as_os_str().to_string_lossy().chars().nth(1),
-        Some(':')
-    );
-    assert_eq!(
-        std::fs::read(mounted.join("read-only.txt")).unwrap(),
-        b"mounted through worker"
-    );
-    assert!(std::fs::write(mounted.join("new.txt"), b"denied").is_err());
-
-    write_frame(&mut input, &ParentCommand::Unmount).unwrap();
-    loop {
-        match read_frame::<_, WorkerEvent>(&mut output).unwrap().unwrap() {
-            WorkerEvent::Succeeded => break,
-            WorkerEvent::Failed { message, .. } => panic!("unmount failed: {message}"),
-            _ => {}
-        }
+    let password = "worker-mount-password";
+    let fixtures: [(&str, &[u8]); 2] = [
+        ("first", b"first mounted image"),
+        ("second", b"second mounted image"),
+    ];
+    let mut containers = Vec::new();
+    for (name, contents) in fixtures {
+        let source = temp.path().join(format!("{name}-source"));
+        let container = temp.path().join(format!("{name}.cfs"));
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(source.join("photo.jpg"), contents).unwrap();
+        pack_fixture(&source, &container, password);
+        containers.push((container, contents));
     }
-    assert!(child.wait().unwrap().success());
-    assert!(std::fs::read(mounted.join("read-only.txt")).is_err());
+
+    let mut observed = Vec::new();
+    for (container, expected) in containers.iter().chain(std::iter::once(&containers[0])) {
+        let (mut child, mut input, mut output) = spawn();
+        write_frame(
+            &mut input,
+            &WorkerRequest {
+                version: PROTOCOL_VERSION,
+                operation: WorkerOperation::Mount {
+                    container: container.clone(),
+                    password: Secret::new(password),
+                },
+            },
+        )
+        .unwrap();
+        let mounted = loop {
+            match read_frame::<_, WorkerEvent>(&mut output).unwrap().unwrap() {
+                WorkerEvent::Mounted { path } => break path,
+                WorkerEvent::Failed { message, .. } => panic!("mount worker failed: {message}"),
+                _ => {}
+            }
+        };
+        assert_eq!(mounted.as_os_str().to_string_lossy().len(), 2);
+        assert_eq!(
+            mounted.as_os_str().to_string_lossy().chars().nth(1),
+            Some(':')
+        );
+        let mounted_file = PathBuf::from(format!("{}\\photo.jpg", mounted.display()));
+        let denied_file = PathBuf::from(format!("{}\\new.txt", mounted.display()));
+        assert_eq!(std::fs::read(&mounted_file).unwrap(), *expected);
+        observed.push((mounted.clone(), thumbnail_cache_id(&mounted_file)));
+        assert!(std::fs::write(denied_file, b"denied").is_err());
+
+        write_frame(&mut input, &ParentCommand::Unmount).unwrap();
+        loop {
+            match read_frame::<_, WorkerEvent>(&mut output).unwrap().unwrap() {
+                WorkerEvent::Succeeded => break,
+                WorkerEvent::Failed { message, .. } => panic!("unmount failed: {message}"),
+                _ => {}
+            }
+        }
+        assert!(child.wait().unwrap().success());
+        assert!(std::fs::read(mounted_file).is_err());
+    }
+
+    assert_eq!(observed[0].0, observed[1].0);
+    assert_eq!(observed[0].0, observed[2].0);
+    assert_ne!(observed[0].1, observed[1].1);
+    assert_eq!(observed[0].1, observed[2].1);
+    unsafe { CoUninitialize() };
 }

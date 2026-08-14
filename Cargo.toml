@@ -15,7 +15,7 @@ default-members = [
 resolver = "3"
 
 [workspace.package]
-version = "3.2.1"
+version = "3.2.2"
 edition = "2024"
 license = "MIT"
 

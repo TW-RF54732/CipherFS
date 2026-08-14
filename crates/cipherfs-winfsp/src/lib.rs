@@ -3,6 +3,7 @@
 use anyhow::{Context, Result};
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 use windows::Win32::Foundation::{
     CloseHandle, HANDLE, HLOCAL, LocalFree, STATUS_BUFFER_TOO_SMALL, STATUS_DATA_ERROR,
     STATUS_FILE_IS_A_DIRECTORY, STATUS_MEDIA_WRITE_PROTECTED, STATUS_NOT_A_DIRECTORY,
@@ -43,11 +44,28 @@ pub struct WinFspCipherFs {
     names: WindowsNameMap,
     total_size: u64,
     security_descriptor: Vec<u8>,
+    identity: MountIdentity,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct MountIdentity {
+    volume_serial_number: u32,
+    snapshot_time: u64,
 }
 
 impl WinFspCipherFs {
     fn open(path: &Path, password: &str, cache_mib: u64) -> Result<Self> {
         let core = ReadOnlyFs::open(path, password, cache_mib)?;
+        let container_id = core.container_id();
+        let snapshot_time = core
+            .backing_modified()
+            .ok()
+            .and_then(system_time_to_filetime)
+            .unwrap_or_else(|| fallback_filetime(container_id));
+        let identity = MountIdentity {
+            volume_serial_number: volume_serial_number(container_id),
+            snapshot_time,
+        };
         let mut nodes = vec![core.metadata(1)?];
         let mut cursor = 0;
         let mut total_size = 0u64;
@@ -69,6 +87,7 @@ impl WinFspCipherFs {
             names,
             total_size,
             security_descriptor,
+            identity,
         })
     }
 
@@ -125,7 +144,7 @@ impl FileSystemContext for WinFspCipherFs {
         file_info: &mut OpenFileInfo,
     ) -> winfsp::Result<Self::FileContext> {
         let node = self.resolve(file_name)?;
-        fill_info(&node, file_info.as_mut());
+        fill_info(&node, self.identity.snapshot_time, file_info.as_mut());
         file_info.set_normalized_name(file_name.as_slice(), None);
         Ok(node)
     }
@@ -224,7 +243,7 @@ impl FileSystemContext for WinFspCipherFs {
         context: &Self::FileContext,
         file_info: &mut FileInfo,
     ) -> winfsp::Result<()> {
-        fill_info(context, file_info);
+        fill_info(context, self.identity.snapshot_time, file_info);
         Ok(())
     }
 
@@ -259,7 +278,7 @@ impl FileSystemContext for WinFspCipherFs {
         for child in children.into_iter().skip(start) {
             let display = self.names.name(&child);
             let mut info = DirInfo::<256>::new();
-            fill_info(&child, info.file_info_mut());
+            fill_info(&child, self.identity.snapshot_time, info.file_info_mut());
             info.set_name(display)?;
             if !info.append_to_buffer(buffer, &mut cursor) {
                 break;
@@ -333,9 +352,7 @@ impl WinFspMountSession {
     ) -> Result<Self> {
         let init = initialize_winfsp()?;
         let filesystem = WinFspCipherFs::open(container, password, cache_mib)?;
-        let mut host: FileSystemHost<WinFspCipherFs> =
-            FileSystemHost::new(volume_params(), filesystem)
-                .context("Unable to create WinFsp host")?;
+        let mut host = filesystem_host(filesystem).context("Unable to create WinFsp host")?;
         host.start().context("Unable to start WinFsp dispatcher")?;
 
         let automatic = mountpoint.to_string_lossy().eq_ignore_ascii_case("auto");
@@ -431,19 +448,60 @@ fn auto_drive_candidates() -> impl Iterator<Item = PathBuf> {
     })
 }
 
-fn volume_params() -> VolumeParams {
+fn filesystem_host(filesystem: WinFspCipherFs) -> winfsp::Result<FileSystemHost<WinFspCipherFs>> {
+    let params = volume_params(filesystem.identity);
+    Ok(FileSystemHost::new(params, filesystem)?)
+}
+
+fn volume_params(identity: MountIdentity) -> VolumeParams {
     let mut params = VolumeParams::new();
     params
         .filesystem_name("CipherFS")
         .sector_size(4096)
         .sectors_per_allocation_unit(1)
         .max_component_length(255)
+        .volume_creation_time(identity.snapshot_time)
+        .volume_serial_number(identity.volume_serial_number)
         .case_sensitive_search(false)
         .case_preserved_names(true)
         .unicode_on_disk(true)
         .read_only_volume(true)
         .persistent_acls(true);
     params
+}
+
+const WINDOWS_EPOCH_OFFSET_SECONDS: u64 = 11_644_473_600;
+const FILETIME_TICKS_PER_SECOND: u64 = 10_000_000;
+const FALLBACK_FILETIME_BASE: u64 = 125_911_584_000_000_000; // 2000-01-01 UTC
+const FALLBACK_FILETIME_SPAN: u64 = 20 * 365 * 24 * 60 * 60 * FILETIME_TICKS_PER_SECOND;
+
+fn volume_serial_number(container_id: [u8; 16]) -> u32 {
+    // FNV-1a folds the full container namespace into WinFsp's 32-bit serial
+    // without adding mutable state or changing the container format.
+    let serial = container_id.iter().fold(2_166_136_261u32, |hash, byte| {
+        (hash ^ u32::from(*byte)).wrapping_mul(16_777_619)
+    });
+    if serial == 0 { 1 } else { serial }
+}
+
+fn system_time_to_filetime(time: SystemTime) -> Option<u64> {
+    let unix_epoch_ticks = WINDOWS_EPOCH_OFFSET_SECONDS.checked_mul(FILETIME_TICKS_PER_SECOND)?;
+    match time.duration_since(UNIX_EPOCH) {
+        Ok(duration) => unix_epoch_ticks.checked_add(duration_to_filetime_ticks(duration)?),
+        Err(error) => unix_epoch_ticks.checked_sub(duration_to_filetime_ticks(error.duration())?),
+    }
+}
+
+fn duration_to_filetime_ticks(duration: std::time::Duration) -> Option<u64> {
+    duration
+        .as_secs()
+        .checked_mul(FILETIME_TICKS_PER_SECOND)?
+        .checked_add(u64::from(duration.subsec_nanos()) / 100)
+}
+
+fn fallback_filetime(container_id: [u8; 16]) -> u64 {
+    let value = u64::from_le_bytes(container_id[..8].try_into().expect("eight-byte slice"));
+    FALLBACK_FILETIME_BASE + value % FALLBACK_FILETIME_SPAN
 }
 
 fn read_only_security_descriptor() -> Result<Vec<u8>> {
@@ -502,10 +560,14 @@ fn attributes(node: &Node) -> u32 {
     }
 }
 
-fn fill_info(node: &Node, info: &mut FileInfo) {
+fn fill_info(node: &Node, snapshot_time: u64, info: &mut FileInfo) {
     info.file_attributes = attributes(node);
     info.file_size = node.size;
     info.allocation_size = node.size.div_ceil(4096) * 4096;
+    info.creation_time = snapshot_time;
+    info.last_access_time = snapshot_time;
+    info.last_write_time = snapshot_time;
+    info.change_time = snapshot_time;
     info.index_number = node.id;
 }
 
@@ -522,6 +584,8 @@ fn map_error(error: FsError) -> winfsp::FspError {
 mod tests {
     use super::*;
     use rand::Rng;
+    use std::os::windows::fs::MetadataExt;
+    use windows::Win32::Storage::FileSystem::GetVolumeInformationW;
     use winfsp::host::MountPoint;
 
     const CRASH_TEST_NAME: &str = "tests::runtime_e2e_hard_termination_folder_mount_recovers";
@@ -553,6 +617,122 @@ mod tests {
             cipherfs_core::operation::OperationControl::new(&cancellation, &reporter),
         )
         .unwrap();
+    }
+
+    #[test]
+    fn mount_identity_is_stable_nonzero_and_populates_file_info() {
+        let first_id = [0u8; 16];
+        let mut second_id = [0u8; 16];
+        second_id[15] = 2;
+
+        assert_ne!(volume_serial_number(first_id), 0);
+        assert_eq!(
+            volume_serial_number(first_id),
+            volume_serial_number(first_id)
+        );
+        assert_ne!(
+            volume_serial_number(first_id),
+            volume_serial_number(second_id)
+        );
+
+        let unix_epoch = system_time_to_filetime(UNIX_EPOCH).unwrap();
+        assert_eq!(
+            unix_epoch,
+            WINDOWS_EPOCH_OFFSET_SECONDS * FILETIME_TICKS_PER_SECOND
+        );
+        assert_eq!(
+            system_time_to_filetime(UNIX_EPOCH + std::time::Duration::from_secs(1)).unwrap(),
+            unix_epoch + FILETIME_TICKS_PER_SECOND
+        );
+
+        let fallback = fallback_filetime(second_id);
+        assert!(fallback >= FALLBACK_FILETIME_BASE);
+        assert!(fallback < FALLBACK_FILETIME_BASE + FALLBACK_FILETIME_SPAN);
+        assert_eq!(fallback, fallback_filetime(second_id));
+
+        let node = Node {
+            id: 7,
+            parent_id: 1,
+            name: "photo.jpg".into(),
+            kind: NodeKind::File,
+            size: 4_097,
+        };
+        let mut info = FileInfo::default();
+        fill_info(&node, fallback, &mut info);
+        assert_eq!(info.file_size, node.size);
+        assert_eq!(info.allocation_size, 8_192);
+        assert_eq!(info.index_number, node.id);
+        assert_eq!(info.creation_time, fallback);
+        assert_eq!(info.last_access_time, fallback);
+        assert_eq!(info.last_write_time, fallback);
+        assert_eq!(info.change_time, fallback);
+    }
+
+    fn mounted_volume_serial(root: &str) -> u32 {
+        let root = HSTRING::from(format!("{root}\\"));
+        let mut serial = 0u32;
+        unsafe {
+            GetVolumeInformationW(
+                PCWSTR(root.as_ptr()),
+                None,
+                Some(&mut serial),
+                None,
+                None,
+                None,
+            )
+        }
+        .unwrap();
+        serial
+    }
+
+    #[test]
+    #[ignore = "requires the pinned WinFsp runtime and a free drive letter"]
+    fn runtime_e2e_mount_identity_separates_containers() {
+        let _init = initialize_winfsp().expect("WinFsp runtime must be installed for E2E");
+        let temp = tempfile::tempdir().unwrap();
+        let password = random_test_password();
+        let mut containers = Vec::new();
+        let fixtures: [(&str, &[u8]); 2] = [("first", b"first image"), ("second", b"second image")];
+        for (name, contents) in fixtures {
+            let source = temp.path().join(format!("{name}-source"));
+            let container = temp.path().join(format!("{name}.cfs"));
+            std::fs::create_dir(&source).unwrap();
+            std::fs::write(source.join("photo.jpg"), contents).unwrap();
+            pack_test(&source, &container, &password, 1);
+            containers.push((container, contents));
+        }
+
+        let occupied = unsafe { GetLogicalDrives() };
+        let drive_letter = (3u8..=25)
+            .rev()
+            .find(|index| occupied & (1 << index) == 0)
+            .map(|index| (b'A' + index) as char)
+            .expect("a free drive letter is required for WinFsp E2E");
+        let drive_mount = format!("{drive_letter}:");
+        let mounted_file = format!("{drive_mount}\\photo.jpg");
+        let mut observed = Vec::new();
+
+        for (container, contents) in containers.iter().chain(std::iter::once(&containers[0])) {
+            let filesystem = WinFspCipherFs::open(container, &password, 8).unwrap();
+            let expected = filesystem.identity;
+            let mut host = filesystem_host(filesystem).unwrap();
+            host.start().unwrap();
+            host.mount(&drive_mount).unwrap();
+
+            assert_eq!(std::fs::read(&mounted_file).unwrap(), *contents);
+            let metadata = std::fs::metadata(&mounted_file).unwrap();
+            assert_eq!(metadata.last_write_time(), expected.snapshot_time);
+            assert_ne!(metadata.last_write_time(), 0);
+            let serial = mounted_volume_serial(&drive_mount);
+            assert_eq!(serial, expected.volume_serial_number);
+            observed.push((serial, metadata.last_write_time()));
+
+            host.unmount();
+            host.stop();
+        }
+
+        assert_ne!(observed[0].0, observed[1].0);
+        assert_eq!(observed[0], observed[2]);
     }
 
     #[test]
@@ -591,8 +771,7 @@ mod tests {
             let password = std::env::var("CIPHERFS_WINFSP_CRASH_PASSWORD").unwrap();
             let _init = initialize_winfsp().unwrap();
             let filesystem = WinFspCipherFs::open(&container, &password, 0).unwrap();
-            let mut host: FileSystemHost<WinFspCipherFs> =
-                FileSystemHost::new(volume_params(), filesystem).unwrap();
+            let mut host = filesystem_host(filesystem).unwrap();
             host.start().unwrap();
             let prepared = prepare_directory_mountpoint(&mountpoint).unwrap().unwrap();
             host.mount(&prepared.mount_path).unwrap();
@@ -641,8 +820,7 @@ mod tests {
 
         let _init = initialize_winfsp().unwrap();
         let filesystem = WinFspCipherFs::open(&container, &password, 0).unwrap();
-        let mut host: FileSystemHost<WinFspCipherFs> =
-            FileSystemHost::new(volume_params(), filesystem).unwrap();
+        let mut host = filesystem_host(filesystem).unwrap();
         host.start().unwrap();
         let prepared = prepare_directory_mountpoint(&mountpoint).unwrap().unwrap();
         host.mount(&prepared.mount_path).unwrap();
@@ -675,8 +853,7 @@ mod tests {
 
         if std::env::var_os("CIPHERFS_WINFSP_FOLDER_E2E").is_some() {
             let filesystem = WinFspCipherFs::open(&container, &password, 8).unwrap();
-            let mut host: FileSystemHost<WinFspCipherFs> =
-                FileSystemHost::new(volume_params(), filesystem).unwrap();
+            let mut host = filesystem_host(filesystem).unwrap();
             host.start().unwrap();
             let mountpoint_with_separator =
                 std::path::PathBuf::from(format!("{}\\", mountpoint.display()));
@@ -702,8 +879,7 @@ mod tests {
             .expect("a free drive letter is required for WinFsp E2E");
         let drive_mount = format!("{drive_letter}:");
         let drive_filesystem = WinFspCipherFs::open(&container, &password, 8).unwrap();
-        let mut drive_host: FileSystemHost<WinFspCipherFs> =
-            FileSystemHost::new(volume_params(), drive_filesystem).unwrap();
+        let mut drive_host = filesystem_host(drive_filesystem).unwrap();
         drive_host.start().unwrap();
         drive_host.mount(&drive_mount).unwrap();
         assert_eq!(
@@ -744,8 +920,7 @@ mod tests {
 
         let before_auto = unsafe { windows::Win32::Storage::FileSystem::GetLogicalDrives() };
         let auto_filesystem = WinFspCipherFs::open(&container, &password, 8).unwrap();
-        let mut auto_host: FileSystemHost<WinFspCipherFs> =
-            FileSystemHost::new(volume_params(), auto_filesystem).unwrap();
+        let mut auto_host = filesystem_host(auto_filesystem).unwrap();
         auto_host.start().unwrap();
         auto_host.mount(MountPoint::NextFreeDrive).unwrap();
         let after_auto = unsafe { windows::Win32::Storage::FileSystem::GetLogicalDrives() };
@@ -779,8 +954,7 @@ mod tests {
             .expect("a free drive letter is required for corruption E2E");
         let corrupt_mount = format!("{corrupt_letter}:");
         let corrupt_filesystem = WinFspCipherFs::open(&container, &password, 0).unwrap();
-        let mut corrupt_host: FileSystemHost<WinFspCipherFs> =
-            FileSystemHost::new(volume_params(), corrupt_filesystem).unwrap();
+        let mut corrupt_host = filesystem_host(corrupt_filesystem).unwrap();
         corrupt_host.start().unwrap();
         corrupt_host.mount(&corrupt_mount).unwrap();
         let small_result = std::fs::read(format!("{corrupt_mount}\\small.txt"));

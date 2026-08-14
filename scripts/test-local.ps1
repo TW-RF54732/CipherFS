@@ -99,8 +99,23 @@ foreach ($item in $scopes) {
     }
 }
 
+$winFspRegistry = 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\WinFsp'
+$winFspInstalled = Test-Path $winFspRegistry
+if ($packages -contains 'cipherfs-winfsp' -and $winFspInstalled) {
+    $winFspInstallDir = (Get-ItemProperty $winFspRegistry).InstallDir
+    $winFspBin = Join-Path $winFspInstallDir 'bin'
+    if (-not (Test-Path -LiteralPath $winFspBin)) {
+        throw "WinFsp registry entry points to a missing bin directory: $winFspBin"
+    }
+    $env:PATH = "$winFspBin;$env:PATH"
+}
+
 foreach ($package in $packages) {
-    Invoke-Step @('cargo', 'test', '--locked', '-p', $package)
+    if ($package -eq 'cipherfs-winfsp' -and -not $winFspInstalled) {
+        Write-Warning 'Skipping cipherfs-winfsp tests because the WinFsp runtime is not installed.'
+    } else {
+        Invoke-Step @('cargo', 'test', '--locked', '-p', $package)
+    }
     Invoke-Step @('cargo', 'clippy', '--locked', '-p', $package, '--all-targets', '--', '-D', 'warnings')
 }
 
@@ -111,9 +126,8 @@ if ($Level -in @('Runtime', 'Full')) {
         Invoke-GuiStep '.\target\release\cipherfs-shell.exe' @('--native-dialog-smoke', 'pack')
     }
     if ($packages -contains 'cipherfs-winfsp') {
-        $installed = Test-Path 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\WinFsp'
-        if ($installed) {
-            Invoke-Step @('cargo', 'test', '--locked', '--release', '-p', 'cipherfs-winfsp', 'runtime_mount_reads_files_and_rejects_mutation', '--', '--ignored', '--test-threads=1', '--nocapture')
+        if ($winFspInstalled) {
+            Invoke-Step @('cargo', 'test', '--locked', '--release', '-p', 'cipherfs-winfsp', 'runtime_e2e_', '--', '--ignored', '--test-threads=1', '--nocapture')
             Invoke-Step @('cargo', 'test', '--locked', '--release', '-p', 'cipherfs-windows-shell', 'worker_mount_session_auto_drive_and_unmount', '--', '--ignored', '--test-threads=1', '--nocapture')
         } else {
             Write-Warning 'WinFsp runtime is not installed; runtime mount tests were not run.'

@@ -4,6 +4,7 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::SystemTime;
 use zeroize::Zeroizing;
 
 use crate::v2::{self, CHUNK_SIZE, Entry, EntryKind, OpenedContainer};
@@ -100,6 +101,16 @@ impl ReadOnlyFs {
 
     pub fn read(&self, id: u64, offset: u64, size: u32) -> Result<Zeroizing<Vec<u8>>, FsError> {
         self.0.read(id, offset, size)
+    }
+
+    /// Returns the stable identifier authenticated as part of this container.
+    pub fn container_id(&self) -> [u8; 16] {
+        self.0.opened.header.container_id
+    }
+
+    /// Returns the modification time of the already-open backing container.
+    pub fn backing_modified(&self) -> std::io::Result<SystemTime> {
+        self.0.opened.file.metadata()?.modified()
     }
 }
 
@@ -338,6 +349,8 @@ mod tests {
         );
 
         let shared = Arc::new(ReadOnlyFs::open(&container, &password, 8).unwrap());
+        assert_ne!(shared.container_id(), [0; 16]);
+        assert!(shared.backing_modified().is_ok());
         let names: Vec<_> = shared
             .read_dir(1)
             .unwrap()

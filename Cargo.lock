@@ -965,7 +965,7 @@ dependencies = [
 
 [[package]]
 name = "cipherfs-cli"
-version = "3.2.1"
+version = "3.2.2"
 dependencies = [
  "anyhow",
  "cipherfs-core",
@@ -986,7 +986,7 @@ dependencies = [
 
 [[package]]
 name = "cipherfs-core"
-version = "3.2.1"
+version = "3.2.2"
 dependencies = [
  "anyhow",
  "argon2",
@@ -1011,7 +1011,7 @@ dependencies = [
 
 [[package]]
 name = "cipherfs-fuse"
-version = "3.2.1"
+version = "3.2.2"
 dependencies = [
  "anyhow",
  "cipherfs-core",
@@ -1021,7 +1021,7 @@ dependencies = [
 
 [[package]]
 name = "cipherfs-update"
-version = "3.2.1"
+version = "3.2.2"
 dependencies = [
  "anyhow",
  "hex",
@@ -1036,7 +1036,7 @@ dependencies = [
 
 [[package]]
 name = "cipherfs-windows-shell"
-version = "3.2.1"
+version = "3.2.2"
 dependencies = [
  "anyhow",
  "cipherfs-core",
@@ -1058,7 +1058,7 @@ dependencies = [
 
 [[package]]
 name = "cipherfs-winfsp"
-version = "3.2.1"
+version = "3.2.2"
 dependencies = [
  "anyhow",
  "cipherfs-core",
