@@ -49,16 +49,16 @@ enum Commands {
         /// Maximum index size accepted during this pack, in MiB (local hard cap: 512)
         #[arg(long, default_value_t = 512)]
         max_index: u64,
-        /// Worker threads for chunk encryption (0 uses the available CPU parallelism)
-        #[arg(long, default_value_t = 0, value_parser = parse_threads)]
+        /// Worker threads for chunk encryption (omit for balanced default; 0 uses all available)
+        #[arg(long, default_value_t = cipherfs_core::default_threads(), value_parser = parse_threads)]
         threads: usize,
     },
     /// Extract a v2 container into a destination that does not yet exist
     Extract {
         container: PathBuf,
         output: PathBuf,
-        /// Worker threads for v2 chunk decryption (0 uses the available CPU parallelism)
-        #[arg(long, default_value_t = 0, value_parser = parse_threads)]
+        /// Worker threads for v2 chunk decryption (omit for balanced default; 0 uses all available)
+        #[arg(long, default_value_t = cipherfs_core::default_threads(), value_parser = parse_threads)]
         threads: usize,
     },
     /// Mount a v2 container read-only
@@ -74,8 +74,8 @@ enum Commands {
     /// Authenticate the complete header, index, and data without extracting
     Verify {
         container: PathBuf,
-        /// Worker threads for v2 chunk verification (0 uses the available CPU parallelism)
-        #[arg(long, default_value_t = 0, value_parser = parse_threads)]
+        /// Worker threads for v2 chunk verification (omit for balanced default; 0 uses all available)
+        #[arg(long, default_value_t = cipherfs_core::default_threads(), value_parser = parse_threads)]
         threads: usize,
     },
     /// Update the Linux portable binary; Windows updates use CipherFS Setup
@@ -530,6 +530,22 @@ mod tests {
     #[test]
     fn release_notes_strip_terminal_controls() {
         assert_eq!(terminal_safe("ok\u{1b}[31m\nnext"), "ok[31m\nnext");
+    }
+
+    #[test]
+    fn threads_default_to_balanced_but_explicit_zero_is_preserved() {
+        let default = Cli::try_parse_from(["cipherfs", "verify", "vault.cfs"]).unwrap();
+        let Commands::Verify { threads, .. } = default.command else {
+            unreachable!();
+        };
+        assert_eq!(threads, cipherfs_core::default_threads());
+
+        let maximum =
+            Cli::try_parse_from(["cipherfs", "verify", "vault.cfs", "--threads", "0"]).unwrap();
+        let Commands::Verify { threads, .. } = maximum.command else {
+            unreachable!();
+        };
+        assert_eq!(threads, 0);
     }
 
     #[test]

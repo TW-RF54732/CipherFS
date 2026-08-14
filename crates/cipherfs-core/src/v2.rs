@@ -856,9 +856,17 @@ pub fn verify_all(opened: &OpenedContainer) -> Result<()> {
     verify_all_with_control(opened, &cancellation, &reporter)
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct VerifyOptions {
     pub threads: usize,
+}
+
+impl Default for VerifyOptions {
+    fn default() -> Self {
+        Self {
+            threads: crate::parallel::default_threads(),
+        }
+    }
 }
 
 pub struct VerifyRequest<'a> {

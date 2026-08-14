@@ -13,11 +13,20 @@ use crate::operation::{
 use crate::safe_fs::SafeRoot;
 use crate::v2::{self, EntryKind};
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ExtractOptions {
     pub threads: usize,
     /// Frontend-selected sibling staging path for exact crash cleanup.
     pub staging_path: Option<PathBuf>,
+}
+
+impl Default for ExtractOptions {
+    fn default() -> Self {
+        Self {
+            threads: crate::parallel::default_threads(),
+            staging_path: None,
+        }
+    }
 }
 
 pub struct ExtractRequest<'a> {

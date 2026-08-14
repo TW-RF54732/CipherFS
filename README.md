@@ -141,16 +141,16 @@ Use the same commands on Linux and Windows; replace `./cipherfs` with
 
 ```bash
 # Create an encrypted .cfs container (prompts for a password)
-./cipherfs pack <source_directory> [output_file] [--threads 0]
+./cipherfs pack <source_directory> [output_file] [--threads N]
 
 # Open it read-only; use an existing empty directory on Linux
 ./cipherfs mount <container.cfs> <mount_point> [--cache-mib 64]
 
 # Recover files into a destination that does not yet exist
-./cipherfs extract <container.cfs> <output_dir> [--threads 0]
+./cipherfs extract <container.cfs> <output_dir> [--threads N]
 
 # Authenticate the entire container without extracting it
-./cipherfs verify <container.cfs> [--threads 0]
+./cipherfs verify <container.cfs> [--threads N]
 ```
 
 Press **Ctrl+C** to unmount from the CLI. On Windows, `<mount_point>` may be a
@@ -238,6 +238,10 @@ target `x86_64-pc-windows-msvc`.
   the v2 on-disk format remains compatible with existing v2 containers.
 - Parallelism is bounded by the worker count, so processing a 100 GB file does
   not require holding the whole file in memory.
+- By default, pack, extract, and verify use half of the available logical CPU
+  parallelism, rounded down and capped at six workers, with a minimum of one.
+  Pass `--threads 0` to use all available logical CPU parallelism, or pass a
+  positive value to select an exact worker count.
 - More threads only help until storage bandwidth becomes the bottleneck. On a
   slower disk, a lower `--threads` value may provide similar throughput with
   less CPU and memory pressure.

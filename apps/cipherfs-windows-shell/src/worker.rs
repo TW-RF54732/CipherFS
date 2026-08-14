@@ -146,8 +146,8 @@ fn execute(
                 output: &output,
                 password: password.expose(),
                 options: ExtractOptions {
-                    threads: 0,
                     staging_path: Some(staging),
+                    ..ExtractOptions::default()
                 },
             },
             OperationControl::new(cancellation, reporter),

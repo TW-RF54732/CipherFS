@@ -72,7 +72,7 @@ impl Default for PackOptions {
             argon2_t_cost: 3,
             argon2_p_cost: 4,
             max_index_size: MAX_INDEX_SIZE,
-            threads: 0,
+            threads: crate::parallel::default_threads(),
             temporary_path: None,
         }
     }

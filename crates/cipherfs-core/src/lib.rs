@@ -17,6 +17,7 @@ mod windows_names;
 pub use extract::{ExtractOptions, ExtractRequest, execute as extract};
 pub use format::require_v2;
 pub use pack::{PackOptions, PackRequest, execute as pack};
+pub use parallel::default_threads;
 pub use platform_io::PlatformFileExt;
 pub use readonly_fs::{FsError, FsErrorKind, Node, NodeKind, ReadOnlyFs};
 pub use v2::{
