@@ -1,202 +1,190 @@
 "use strict";
 
-const GITHUB_REPO = "TW-RF54732/CipherFS";
-const LATEST_RELEASE_API = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
-const ALL_RELEASES_API = `https://api.github.com/repos/${GITHUB_REPO}/releases?per_page=100`;
+const REPOSITORY = "TW-RF54732/CipherFS";
+const RELEASES_API = `https://api.github.com/repos/${REPOSITORY}/releases?per_page=100`;
+const RELEASES_FALLBACK = `https://github.com/${REPOSITORY}/releases`;
+const ATTESTATIONS_URL = `https://github.com/${REPOSITORY}/attestations`;
+const ASSET_NAMES = Object.freeze({
+  installer: "CipherFS-Setup-x64.exe",
+  portable: "cipherfs-windows-portable-x64.zip",
+  linux: "cipherfs-linux-x64.tar.gz",
+  checksum: "cipherfs-windows-x64.sha256",
+  manifest: "cipherfs-windows-setup.manifest",
+  minisign: "cipherfs-windows-setup.manifest.minisig",
+});
 
 function formatBytes(bytes) {
-  if (!Number.isFinite(bytes) || bytes <= 0) return "";
-  const units = ["B", "KB", "MB", "GB"];
-  const exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
-  const value = bytes / Math.pow(1024, exponent);
-  return `${value.toFixed(value >= 10 || exponent === 0 ? 0 : 1)} ${units[exponent]}`;
+  if (!Number.isFinite(bytes) || bytes <= 0) return "Windows x64";
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB · Windows x64`;
 }
 
-function formatNumber(num) {
-  return new Intl.NumberFormat("en-US").format(num);
+function formatDownloads(value) {
+  return new Intl.NumberFormat("zh-TW").format(value);
 }
 
-function findAsset(assets, pattern) {
-  return assets.find((asset) => pattern.test(asset.name));
+function formatDate(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("zh-TW", {
+    year: "numeric", month: "long", day: "numeric", timeZone: "UTC",
+  }).format(date);
 }
 
-async function fetchJson(url) {
-  const response = await fetch(url, {
-    headers: {
-      Accept: "application/vnd.github+json"
-    }
-  });
-
-  if (!response.ok) {
-    throw new Error(`GitHub API error: ${response.status}`);
-  }
-
-  return response.json();
+function findAsset(release, name) {
+  return release.assets?.find((asset) => asset.name === name) || null;
 }
 
-function updateLink(selector, href, fallbackHref) {
+function buildReleaseData(releases, generatedAt = new Date().toISOString()) {
+  if (!Array.isArray(releases)) throw new Error("GitHub Releases response is invalid");
+  const published = releases.filter((release) => !release.draft);
+  const featured = published
+    .filter((release) => !release.prerelease && findAsset(release, ASSET_NAMES.installer))
+    .sort((left, right) => new Date(right.published_at) - new Date(left.published_at))[0];
+  if (!featured) throw new Error(`No stable release contains ${ASSET_NAMES.installer}`);
+
+  const installer = findAsset(featured, ASSET_NAMES.installer);
+  const alternative = (name) => {
+    const asset = findAsset(featured, name);
+    return asset ? { name: asset.name, url: asset.browser_download_url, size_bytes: asset.size } : null;
+  };
+  const assetUrl = (name) => findAsset(featured, name)?.browser_download_url || null;
+  const installerTotal = published.reduce(
+    (total, release) => total + (findAsset(release, ASSET_NAMES.installer)?.download_count || 0), 0,
+  );
+
+  return {
+    generated_at: generatedAt,
+    source: "github-api",
+    featured: {
+      tag: featured.tag_name, channel: "stable",
+      published_at: featured.published_at, release_url: featured.html_url,
+    },
+    installer: {
+      name: installer.name, url: installer.browser_download_url,
+      size_bytes: installer.size, download_count: installer.download_count,
+    },
+    totals: { installer_downloads: installerTotal },
+    alternatives: {
+      windows_portable: alternative(ASSET_NAMES.portable),
+      linux_x64: alternative(ASSET_NAMES.linux),
+    },
+    verification: {
+      checksum_url: assetUrl(ASSET_NAMES.checksum),
+      manifest_url: assetUrl(ASSET_NAMES.manifest),
+      minisign_url: assetUrl(ASSET_NAMES.minisign),
+      attestation_url: ATTESTATIONS_URL,
+    },
+  };
+}
+
+function setLink(selector, url, disabled = false) {
   const element = document.querySelector(selector);
   if (!element) return;
-
-  if (href) {
-    element.href = href;
-    element.removeAttribute("aria-disabled");
-  } else if (fallbackHref) {
-    element.href = fallbackHref;
-    element.removeAttribute("aria-disabled");
-  } else {
-    element.setAttribute("aria-disabled", "true");
-  }
+  element.href = url || RELEASES_FALLBACK;
+  if (disabled) element.setAttribute("aria-disabled", "true");
+  else element.removeAttribute("aria-disabled");
 }
 
-function setText(selector, text) {
-  const element = document.querySelector(selector);
-  if (element && text !== undefined && text !== null) {
-    element.textContent = text;
+function renderRelease(data, sourceLabel) {
+  document.querySelector("[data-release-version]").textContent = `${data.featured.tag} · ${formatDate(data.featured.published_at)}`;
+  document.querySelector("[data-installer-name]").textContent = data.installer.name;
+  document.querySelector("[data-installer-size]").textContent = formatBytes(data.installer.size_bytes);
+  document.querySelector("[data-installer-downloads]").textContent = formatDownloads(data.installer.download_count);
+  document.querySelector("[data-total-downloads]").textContent = formatDownloads(data.totals.installer_downloads);
+  document.querySelector("[data-download-stats]").hidden = false;
+  document.querySelector("[data-installer-link]").href = data.installer.url;
+
+  setLink("[data-portable-link]", data.alternatives.windows_portable?.url, !data.alternatives.windows_portable);
+  setLink("[data-linux-link]", data.alternatives.linux_x64?.url, !data.alternatives.linux_x64);
+  setLink("[data-release-notes-link]", data.featured.release_url);
+  setLink("[data-checksum-link]", data.verification.checksum_url, !data.verification.checksum_url);
+  setLink("[data-manifest-link]", data.verification.manifest_url, !data.verification.manifest_url);
+  setLink("[data-minisign-link]", data.verification.minisign_url, !data.verification.minisign_url);
+  setLink("[data-attestation-link]", data.verification.attestation_url);
+
+  if (data.alternatives.windows_portable?.size_bytes) {
+    document.querySelector("[data-portable-detail]").textContent =
+      `${formatBytes(data.alternatives.windows_portable.size_bytes).replace(" · Windows x64", "")} · 不修改 PATH、Registry 或 Explorer`;
   }
+  if (data.alternatives.linux_x64?.size_bytes) {
+    document.querySelector("[data-linux-detail]").textContent =
+      `${formatBytes(data.alternatives.linux_x64.size_bytes).replace(" · Windows x64", "")} · Linux x64 / FUSE 3`;
+  }
+  document.querySelector("[data-release-status]").textContent = sourceLabel;
 }
 
-function setDetail(selector, name, size) {
-  const text = [name, formatBytes(size)].filter(Boolean).join(" · ");
-  if (text) {
-    setText(selector, text);
-  }
-}
-
-function initStarPrompt() {
-  const prompt = document.querySelector("[data-star-prompt]");
-  const closeBtn = document.querySelector("[data-star-prompt-close]");
-  const installerLink = document.querySelector("[data-installer-link]");
-
-  if (!prompt || !installerLink) return;
-
-  const storageKey = "cipherfs_star_prompt_dismissed";
-
-  function showPrompt() {
-    if (sessionStorage.getItem(storageKey)) return;
-    prompt.hidden = false;
-    requestAnimationFrame(() => {
-      prompt.classList.add("is-visible");
-    });
-  }
-
-  function hidePrompt() {
-    prompt.classList.remove("is-visible");
-    sessionStorage.setItem(storageKey, "1");
-    setTimeout(() => {
-      prompt.hidden = true;
-    }, 250);
-  }
-
-  installerLink.addEventListener("click", () => {
-    setTimeout(showPrompt, 1200);
+async function fetchGitHubReleaseData() {
+  const response = await fetch(RELEASES_API, {
+    headers: { Accept: "application/vnd.github+json" }, cache: "no-store",
   });
-
-  if (closeBtn) {
-    closeBtn.addEventListener("click", hidePrompt);
-  }
+  if (!response.ok) throw new Error(`GitHub API returned ${response.status}`);
+  return buildReleaseData(await response.json());
 }
 
-async function loadReleaseData() {
-  const statusEl = document.querySelector("[data-release-status]");
-  const statsContainer = document.querySelector("[data-download-stats]");
+async function fetchSnapshotReleaseData() {
+  const response = await fetch("../data/release.json", {
+    headers: { Accept: "application/json" }, cache: "no-cache",
+  });
+  if (!response.ok) throw new Error(`release snapshot returned ${response.status}`);
+  const data = await response.json();
+  if (!data?.featured?.tag || !data?.installer?.url) throw new Error("release snapshot is incomplete");
+  return data;
+}
+
+async function hydrateRelease() {
+  try {
+    renderRelease(
+      await fetchGitHubReleaseData(),
+      "此頁資料由 GitHub Releases 即時取得並計算。重新整理可更新下載次數。",
+    );
+    return;
+  } catch (liveError) {
+    console.warn("CipherFS live release data unavailable:", liveError);
+  }
 
   try {
-    const [latest, allReleases] = await Promise.all([
-      fetchJson(LATEST_RELEASE_API),
-      fetchJson(ALL_RELEASES_API).catch(() => [])
-    ]);
-
-    const assets = Array.isArray(latest.assets) ? latest.assets : [];
-
-    const installerAsset = findAsset(assets, /setup.*\.exe$|\.msi$/i) || findAsset(assets, /\.exe$/i);
-    const portableAsset = findAsset(assets, /portable.*\.zip$|win.*x64.*\.zip$/i);
-    const linuxAsset = findAsset(assets, /linux.*\.tar\.(gz|xz)$|linux.*\.zip$/i);
-    const checksumAsset = findAsset(assets, /sha256|checksum/i);
-    const manifestAsset = findAsset(assets, /manifest/i);
-    const minisignAsset = findAsset(assets, /\.minisig$/i);
-
-    setText("[data-release-version]", latest.tag_name || latest.name || "Latest release");
-
-    if (installerAsset) {
-      updateLink("[data-installer-link]", installerAsset.browser_download_url, latest.html_url);
-      setText("[data-installer-name]", installerAsset.name);
-      setText("[data-installer-size]", formatBytes(installerAsset.size) || "Windows x64");
-
-      if (typeof installerAsset.download_count === "number") {
-        setText("[data-installer-downloads]", formatNumber(installerAsset.download_count));
-      }
-    } else {
-      updateLink("[data-installer-link]", latest.html_url);
-    }
-
-    if (portableAsset) {
-      updateLink("[data-portable-link]", portableAsset.browser_download_url, latest.html_url);
-      setDetail("[data-portable-detail]", portableAsset.name, portableAsset.size);
-    } else {
-      updateLink("[data-portable-link]", latest.html_url);
-    }
-
-    if (linuxAsset) {
-      updateLink("[data-linux-link]", linuxAsset.browser_download_url, latest.html_url);
-      setDetail("[data-linux-detail]", linuxAsset.name, linuxAsset.size);
-    } else {
-      updateLink("[data-linux-link]", latest.html_url);
-    }
-
-    if (checksumAsset) {
-      updateLink("[data-checksum-link]", checksumAsset.browser_download_url, latest.html_url);
-    } else {
-      updateLink("[data-checksum-link]", latest.html_url);
-    }
-
-    if (manifestAsset) {
-      updateLink("[data-manifest-link]", manifestAsset.browser_download_url, latest.html_url);
-    } else {
-      updateLink("[data-manifest-link]", latest.html_url);
-    }
-
-    if (minisignAsset) {
-      updateLink("[data-minisign-link]", minisignAsset.browser_download_url, latest.html_url);
-    } else {
-      updateLink("[data-minisign-link]", latest.html_url);
-    }
-
-    updateLink("[data-release-notes-link]", latest.html_url, `https://github.com/${GITHUB_REPO}/releases`);
-
-    let totalDownloads = 0;
-    if (Array.isArray(allReleases) && allReleases.length) {
-      for (const release of allReleases) {
-        if (!Array.isArray(release.assets)) continue;
-        for (const asset of release.assets) {
-          if (typeof asset.download_count === "number") {
-            totalDownloads += asset.download_count;
-          }
-        }
-      }
-    } else if (installerAsset && typeof installerAsset.download_count === "number") {
-      totalDownloads = installerAsset.download_count;
-    }
-
-    if (totalDownloads > 0) {
-      setText("[data-total-downloads]", formatNumber(totalDownloads));
-    }
-
-    if (statsContainer) {
-      statsContainer.hidden = false;
-    }
-
-    if (statusEl) {
-      statusEl.hidden = true;
-    }
-  } catch (error) {
-    if (statusEl) {
-      statusEl.textContent = "無法即時取得 GitHub 發布資料，請點擊按鈕直接前往 GitHub Releases 下載。";
-    }
+    const snapshot = await fetchSnapshotReleaseData();
+    renderRelease(snapshot, `GitHub API 暫時無法使用，目前顯示 ${formatDate(snapshot.generated_at)} 的發布快照。`);
+  } catch (snapshotError) {
+    document.querySelector("[data-release-version]").textContent = "前往 GitHub Releases 取得最新版本";
+    document.querySelector("[data-installer-link]").href = RELEASES_FALLBACK;
+    document.querySelector("[data-download-stats]").hidden = true;
+    document.querySelector("[data-release-status]").textContent = "目前無法讀取版本資料；下載按鈕已改為前往 GitHub Releases。";
+    console.warn("CipherFS release data fallback:", snapshotError);
   }
 }
 
-document.addEventListener("DOMContentLoaded", () => {
-  initStarPrompt();
-  loadReleaseData();
-});
+function setupStarPrompt() {
+  const downloadButton = document.querySelector("[data-installer-link]");
+  const prompt = document.querySelector("[data-star-prompt]");
+  const closeButton = document.querySelector("[data-star-prompt-close]");
+  if (!downloadButton || !prompt || !closeButton) return;
+
+  let revealTimer = null;
+  const hidePrompt = () => {
+    if (revealTimer !== null) clearTimeout(revealTimer);
+    revealTimer = null;
+    prompt.classList.remove("is-visible");
+    window.setTimeout(() => { prompt.hidden = true; }, 550);
+  };
+
+  downloadButton.addEventListener("click", () => {
+    if (revealTimer !== null) clearTimeout(revealTimer);
+    prompt.hidden = true;
+    prompt.classList.remove("is-visible");
+    revealTimer = window.setTimeout(() => {
+      prompt.hidden = false;
+      window.requestAnimationFrame(() => prompt.classList.add("is-visible"));
+      revealTimer = null;
+    }, 4500);
+  });
+  closeButton.addEventListener("click", hidePrompt);
+}
+
+if (typeof document !== "undefined") {
+  hydrateRelease();
+  setupStarPrompt();
+}
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = { hydrateRelease, buildReleaseData, formatBytes, formatDownloads, formatDate, setupStarPrompt };
+}
