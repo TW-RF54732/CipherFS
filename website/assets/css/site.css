@@ -963,6 +963,27 @@ p,
   gap: 48px;
 }
 
+.compact-boundary {
+  padding: 64px 0;
+}
+
+.compact-boundary .boundary-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 860px;
+}
+
+.compact-boundary .boundary-grid h2 {
+  font-size: 24px;
+  line-height: 1.25;
+}
+
+.compact-boundary .boundary-copy p {
+  max-width: 760px;
+  margin: 0 0 12px;
+}
+
 .boundary-copy p {
   margin: 0 0 16px;
   color: var(--text-body);
@@ -1237,6 +1258,10 @@ p,
   .final-cta,
   .download-hero {
     padding: 80px 0;
+  }
+
+  .compact-boundary {
+    padding: 48px 0;
   }
 
   h1,

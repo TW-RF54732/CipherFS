@@ -58,17 +58,19 @@ Normal text must meet WCAG AA 4.5:1 contrast. Focus indicators must use a visibl
 - Metrics: tabular figures with a clear label; data is hidden when unavailable.
 - Download resource rows: full-row links with visible hover, active, focus, and disabled states.
 - Star prompt: fixed, compact, dismissible, non-modal, and never obscures keyboard focus.
+- Safety boundary: compact, single-column, and visually subordinate to feature sections and the
+  final download action while retaining the audit, backup, security, testing, and source links.
 
 ## Page hierarchy
 
 ### Introduction
 
-1. Brand hero: `CipherFS`, Logo, one-sentence definition, download and GitHub actions.
+1. Brand hero: `CipherFS`, Logo, the no-full-decryption mount benefit, download and GitHub actions.
 2. Windows Shell promise: Explorer → Pack → `.cfs` operations.
 3. Read-only mount: mount window and Explorer disk result.
 4. Verifiable product principles.
-5. Experimental Duress Password with explicit boundary.
-6. Safety boundary and final download action.
+5. Experimental Duress Password with its explicit feature boundary.
+6. Compact experimental-software boundary followed by the final download action.
 
 ### Download
 

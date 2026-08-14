@@ -4,14 +4,17 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#090e15">
-    <meta name="description" content="CipherFS 是實驗性的個人離線隱私工具，將檔案封裝成加密的 .cfs 容器，並整合進 Windows 檔案總管。">
+    <meta name="description" content="CipherFS 是實驗性的個人離線隱私工具，不用完整解密即可掛載瀏覽加密的 .cfs 容器，並整合 Windows 檔案總管。">
     <meta property="og:type" content="website">
     <meta property="og:locale" content="zh_TW">
     <meta property="og:title" content="CipherFS — Windows Shell 加密容器工具">
-    <meta property="og:description" content="不離開檔案總管，也能建立、掛載與管理加密的 .cfs 容器。">
+    <meta property="og:description" content="不用完整解密，就能直接掛載瀏覽加密的 .cfs 容器。">
     <meta property="og:url" content="https://tw-rf54732.github.io/CipherFS/">
     <meta property="og:image" content="./assets/images/brand/og-image.png">
     <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="CipherFS — Windows Shell 加密容器工具">
+    <meta name="twitter:description" content="不用完整解密，就能直接掛載瀏覽加密的 .cfs 容器。">
+    <meta name="twitter:image" content="./assets/images/brand/og-image.png">
     <link rel="canonical" href="https://tw-rf54732.github.io/CipherFS/">
     <link rel="icon" type="image/png" href="./assets/images/brand/cipherfs-app-icon.png">
     <link rel="stylesheet" href="./assets/css/site.css">
@@ -41,7 +44,7 @@
           <div class="hero-copy">
             <p class="eyebrow"><span class="status-dot" aria-hidden="true"></span>Windows Shell · Windows x64</p>
             <h1>CipherFS</h1>
-            <p class="hero-lead">將檔案與資料夾封裝成一個加密的 <code>.cfs</code> 容器。</p>
+            <p class="hero-lead">不用完整解密，就能直接掛載瀏覽加密的 <code>.cfs</code> 容器。</p>
             <div class="button-row">
               <a class="button button-primary" href="./download/index.html">下載 Windows 版 <span aria-hidden="true">→</span></a>
               <a class="button button-secondary" href="https://github.com/TW-RF54732/CipherFS">查看原始碼</a>
@@ -178,7 +181,7 @@
                     <p class="step-index">05 / PRINCIPLES</p>
                     <h2>功能明確<br>界線也明確</h2>
                   </div>
-                  <p class="tab-content-lead">CipherFS 堅持極簡、透明且無任何外部依賴的本機架構原則。</p>
+                  <p class="tab-content-lead">CipherFS 堅持極簡、透明且不依賴任何外部服務的本機架構原則。</p>
                   <div class="principle-grid">
                     <article>
                       <span>01</span>
@@ -225,16 +228,15 @@
         </div>
       </section>
 
-      <!-- 不是重要資料的唯一防線 (個人 · 離線 · 非關鍵檔案) -->
-      <section class="section boundary-section" aria-labelledby="security-boundary-title">
+      <!-- 精簡安全界線 -->
+      <section class="section boundary-section compact-boundary" aria-labelledby="security-boundary-title">
         <div class="container boundary-grid">
           <div>
-            <p class="eyebrow">Experimental software</p>
-            <h2 id="security-boundary-title">不是重要資<br>料的唯一防線</h2>
+            <p class="eyebrow">Safety boundary</p>
+            <h2 id="security-boundary-title">實驗性軟體</h2>
           </div>
           <div class="boundary-copy">
-            <p>CipherFS 尚未經過專業安全稽核。請把它用於個人、離線、非關鍵檔案，不要用它取代可靠備份。</p>
-            <p>安裝或使用前，請先閱讀安全界線與測試方式。</p>
+            <p>CipherFS 尚未經過獨立安全稽核，不應作為重要資料的唯一防線。請保留原始檔案與獨立備份。</p>
             <div class="inline-links">
               <a href="https://github.com/TW-RF54732/CipherFS/blob/main/SECURITY.md">安全界線</a>
               <a href="https://github.com/TW-RF54732/CipherFS/blob/main/TESTING.md">測試方式</a>
@@ -263,7 +265,7 @@
       <div class="container footer-grid">
         <div>
           <a class="brand footer-brand" href="./index.html"><img src="./assets/images/brand/cipherfs-app-icon.png" alt="" width="28" height="28"><span>CipherFS</span></a>
-          <p>Experimental personal/offline privacy software.</p>
+          <p>Personal · Offline · Open source</p>
         </div>
         <div class="footer-links">
           <a href="./download/index.html">下載</a>
