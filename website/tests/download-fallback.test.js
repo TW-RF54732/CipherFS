@@ -27,7 +27,13 @@ function element(selector) {
 }
 
 const scriptPath = path.join(__dirname, "..", "assets", "js", "download.js");
-const { hydrateRelease, buildReleaseData, setupStarPrompt } = require(scriptPath);
+const {
+  hydrateRelease,
+  buildReleaseData,
+  detectDevice,
+  setRecommendationText,
+  setupStarPrompt,
+} = require(scriptPath);
 
 global.document = { querySelector: element };
 global.fetch = async () => { throw new Error("fixture network failure"); };
@@ -49,6 +55,39 @@ global.window = {
   assert.equal(calculated.featured.tag, "v3.2.0", "live calculation must select the newest stable installer");
   assert.equal(calculated.installer.download_count, 7);
   assert.equal(calculated.totals.installer_downloads, 31, "live total includes prereleases but excludes drafts");
+
+  assert.deepEqual(
+    await detectDevice({ userAgentData: { platform: "Windows" }, userAgent: "Windows NT 10.0" }),
+    { os: "windows", arch: "x64", available: true },
+  );
+  assert.deepEqual(
+    await detectDevice({ platform: "Linux x86_64", userAgent: "X11; Linux x86_64" }),
+    { os: "linux", arch: "x64", available: true },
+  );
+  assert.deepEqual(
+    await detectDevice({
+      userAgentData: {
+        platform: "Windows",
+        async getHighEntropyValues() { return { architecture: "arm", bitness: "64" }; },
+      },
+      userAgent: "Windows NT 10.0",
+    }),
+    { os: "windows", arch: "arm64", available: false },
+  );
+  assert.deepEqual(
+    await detectDevice({ platform: "MacIntel", userAgent: "Macintosh" }),
+    { os: "macos", arch: "x64", available: false },
+  );
+
+  setRecommendationText({ os: "linux", arch: "x64", available: true }, calculated);
+  assert.equal(element("[data-installer-link]").href, calculated.alternatives.linux_x64.url);
+  assert.equal(element("[data-download-label]").textContent, "下載 Linux x64 archive");
+  assert.match(element("[data-platform-heading]").textContent, /Linux/);
+
+  setRecommendationText({ os: "macos", arch: "arm64", available: false }, calculated);
+  assert.equal(element("[data-installer-link]").href, "https://github.com/TW-RF54732/CipherFS/releases");
+  assert.match(element("[data-platform-heading]").textContent, /macOS/);
+  assert.match(element("[data-release-status]").textContent, /不會自動推薦下載/);
 
   const originalWarn = console.warn;
   console.warn = () => {};

@@ -34,6 +34,36 @@ function findAsset(release, name) {
   return release.assets?.find((asset) => asset.name === name) || null;
 }
 
+async function detectDevice(navigatorLike = typeof navigator !== "undefined" ? navigator : {}) {
+  const userAgentData = navigatorLike.userAgentData;
+  const platform = String(userAgentData?.platform || navigatorLike.platform || "").toLowerCase();
+  const userAgent = String(navigatorLike.userAgent || "").toLowerCase();
+  let architecture = "";
+
+  if (typeof userAgentData?.getHighEntropyValues === "function") {
+    try {
+      const values = await userAgentData.getHighEntropyValues(["architecture", "bitness"]);
+      architecture = `${values.architecture || ""} ${values.bitness || ""}`.toLowerCase();
+    } catch (error) {
+      console.warn("CipherFS device architecture detection unavailable:", error);
+    }
+  }
+
+  const fingerprint = `${platform} ${userAgent} ${architecture}`;
+  const isArm = /\b(arm|arm64|aarch64)\b/.test(fingerprint);
+  const isWindows = /win/.test(platform) || /windows/.test(userAgent);
+  const isMac = /mac/.test(platform) || /macintosh|iphone|ipad/.test(userAgent);
+  const isLinux = /linux/.test(platform) || /linux/.test(userAgent);
+  const isMobile = /android|iphone|ipad/.test(fingerprint);
+
+  if (isWindows && isArm) return { os: "windows", arch: "arm64", available: false };
+  if (isWindows) return { os: "windows", arch: "x64", available: true };
+  if (isMac) return { os: "macos", arch: isArm ? "arm64" : "x64", available: false };
+  if (isLinux && !isMobile && isArm) return { os: "linux", arch: "arm64", available: false };
+  if (isLinux && !isMobile) return { os: "linux", arch: "x64", available: true };
+  return { os: "other", arch: isArm ? "arm64" : "unknown", available: false };
+}
+
 function buildReleaseData(releases, generatedAt = new Date().toISOString()) {
   if (!Array.isArray(releases)) throw new Error("GitHub Releases response is invalid");
   const published = releases.filter((release) => !release.draft);
@@ -85,7 +115,54 @@ function setLink(selector, url, disabled = false) {
   else element.removeAttribute("aria-disabled");
 }
 
-function renderRelease(data, sourceLabel) {
+function setRecommendationText(device, data) {
+  const heading = document.querySelector("[data-platform-heading]");
+  const intro = document.querySelector("[data-platform-intro]");
+  const kicker = document.querySelector("[data-release-kicker]");
+  const title = document.querySelector("[data-product-title]");
+  const button = document.querySelector("[data-installer-link]");
+  const buttonLabel = document.querySelector("[data-download-label]");
+  const name = document.querySelector("[data-installer-name]");
+  const size = document.querySelector("[data-installer-size]");
+  const stats = document.querySelector("[data-download-stats]");
+
+  if (device.os === "linux" && device.available && data.alternatives.linux_x64) {
+    heading.textContent = "下載 CipherFS for Linux";
+    intro.textContent = "已根據你的裝置推薦 Linux x64 壓縮檔。需要 Windows 版本時仍可從下方手動選擇。";
+    kicker.textContent = "Recommended · Stable · Linux x64";
+    title.textContent = "CipherFS for Linux";
+    button.href = data.alternatives.linux_x64.url;
+    buttonLabel.textContent = "下載 Linux x64 archive";
+    name.textContent = data.alternatives.linux_x64.name;
+    size.textContent = `${formatBytes(data.alternatives.linux_x64.size_bytes).replace(" · Windows x64", "")} · Linux x64 / FUSE 3`;
+    stats.hidden = true;
+    return;
+  }
+
+  if (device.os === "windows" && device.available) {
+    heading.textContent = "下載 CipherFS for Windows";
+    intro.textContent = "已根據你的裝置推薦 Windows x64 Installer。檔案直接來自 CipherFS 的 GitHub Releases。";
+    kicker.textContent = "Recommended · Stable · Windows x64";
+    title.textContent = "CipherFS Installer";
+    buttonLabel.textContent = "下載 Windows Installer";
+    return;
+  }
+
+  const platformNames = { windows: "Windows ARM", macos: "macOS", linux: "Linux ARM", other: "此裝置" };
+  const platformName = platformNames[device.os] || "此裝置";
+  heading.textContent = `CipherFS 尚未提供 ${platformName} 版本`;
+  intro.textContent = "目前只提供 Windows x64 與 Linux x64。請勿下載不相容的版本；下方仍保留所有可用檔案。";
+  kicker.textContent = "Unsupported device · Available builds listed below";
+  title.textContent = "此裝置目前沒有相容版本";
+  button.href = RELEASES_FALLBACK;
+  buttonLabel.textContent = "查看所有 GitHub Releases";
+  name.textContent = "Windows x64 · Linux x64";
+  size.textContent = "尚未提供此平台";
+  stats.hidden = true;
+  document.querySelector("[data-release-status]").textContent = "未偵測到相容的正式版本，因此不會自動推薦下載。";
+}
+
+function renderRelease(data, sourceLabel, device) {
   document.querySelector("[data-release-version]").textContent = `${data.featured.tag} · ${formatDate(data.featured.published_at)}`;
   document.querySelector("[data-installer-name]").textContent = data.installer.name;
   document.querySelector("[data-installer-size]").textContent = formatBytes(data.installer.size_bytes);
@@ -111,6 +188,7 @@ function renderRelease(data, sourceLabel) {
       `${formatBytes(data.alternatives.linux_x64.size_bytes).replace(" · Windows x64", "")} · Linux x64 / FUSE 3`;
   }
   document.querySelector("[data-release-status]").textContent = sourceLabel;
+  setRecommendationText(device, data);
 }
 
 async function fetchGitHubReleaseData() {
@@ -132,10 +210,12 @@ async function fetchSnapshotReleaseData() {
 }
 
 async function hydrateRelease() {
+  const device = await detectDevice();
   try {
     renderRelease(
       await fetchGitHubReleaseData(),
       "此頁資料由 GitHub Releases 即時取得並計算。重新整理可更新下載次數。",
+      device,
     );
     return;
   } catch (liveError) {
@@ -144,7 +224,7 @@ async function hydrateRelease() {
 
   try {
     const snapshot = await fetchSnapshotReleaseData();
-    renderRelease(snapshot, `GitHub API 暫時無法使用，目前顯示 ${formatDate(snapshot.generated_at)} 的發布快照。`);
+    renderRelease(snapshot, `GitHub API 暫時無法使用，目前顯示 ${formatDate(snapshot.generated_at)} 的發布快照。`, device);
   } catch (snapshotError) {
     document.querySelector("[data-release-version]").textContent = "前往 GitHub Releases 取得最新版本";
     document.querySelector("[data-installer-link]").href = RELEASES_FALLBACK;
@@ -186,5 +266,5 @@ if (typeof document !== "undefined") {
   setupStarPrompt();
 }
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { hydrateRelease, buildReleaseData, formatBytes, formatDownloads, formatDate, setupStarPrompt };
+  module.exports = { hydrateRelease, buildReleaseData, detectDevice, formatBytes, formatDownloads, formatDate, setRecommendationText, setupStarPrompt };
 }
