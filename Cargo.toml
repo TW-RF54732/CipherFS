@@ -43,7 +43,7 @@ semver = "1.0.28"
 serde = { version = "1.0.228", features = ["derive"] }
 serde-big-array = "0.5.1"
 self-replace = "1.5.0"
-sha2 = "0.10.9"
+sha2 = "0.11.0"
 slint = { version = "=1.17.1", default-features = false, features = ["std", "backend-winit", "renderer-femtovg", "renderer-software", "accessibility", "compat-1-2", "raw-window-handle-06"] }
 tempfile = "3.27.0"
 walkdir = "2.5.0"
