@@ -28,7 +28,7 @@ chacha20poly1305 = "0.10.1"
 clap = { version = "4.6.1", features = ["derive"] }
 ctrlc = "3.5.1"
 hex = "0.4.3"
-hkdf = "0.12.4"
+hkdf = "0.13.0"
 indicatif = "0.18.4"
 libc = "0.2.186"
 minisign-verify = "0.2.5"
