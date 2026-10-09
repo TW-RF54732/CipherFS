@@ -124,7 +124,6 @@ function setRecommendationText(device, data) {
   const buttonLabel = document.querySelector("[data-download-label]");
   const name = document.querySelector("[data-installer-name]");
   const size = document.querySelector("[data-installer-size]");
-  const stats = document.querySelector("[data-download-stats]");
 
   if (device.os === "linux" && device.available && data.alternatives.linux_x64) {
     heading.textContent = "下載 CipherFS for Linux";
@@ -135,7 +134,6 @@ function setRecommendationText(device, data) {
     buttonLabel.textContent = "下載 Linux x64 archive";
     name.textContent = data.alternatives.linux_x64.name;
     size.textContent = `${formatBytes(data.alternatives.linux_x64.size_bytes).replace(" · Windows x64", "")} · Linux x64 / FUSE 3`;
-    stats.hidden = true;
     return;
   }
 
@@ -149,7 +147,7 @@ function setRecommendationText(device, data) {
   }
 
   const platformNames = { windows: "Windows ARM", macos: "macOS", linux: "Linux ARM", other: "此裝置" };
-  const platformName = platformNames[device.os] || "此裝置";
+  const platformName = device.os === "linux" && device.available ? "Linux x64" : platformNames[device.os] || "此裝置";
   heading.textContent = `CipherFS 尚未提供 ${platformName} 版本`;
   intro.textContent = "目前只提供 Windows x64 與 Linux x64。請勿下載不相容的版本；下方仍保留所有可用檔案。";
   kicker.textContent = "Unsupported device · Available builds listed below";
@@ -158,8 +156,8 @@ function setRecommendationText(device, data) {
   buttonLabel.textContent = "查看所有 GitHub Releases";
   name.textContent = "Windows x64 · Linux x64";
   size.textContent = "尚未提供此平台";
-  stats.hidden = true;
-  document.querySelector("[data-release-status]").textContent = "未偵測到相容的正式版本，因此不會自動推薦下載。";
+  const status = document.querySelector("[data-release-status]");
+  status.textContent += " 未偵測到相容的正式版本，因此不會自動推薦下載。";
 }
 
 function renderRelease(data, sourceLabel, device) {
@@ -171,6 +169,7 @@ function renderRelease(data, sourceLabel, device) {
   document.querySelector("[data-download-stats]").hidden = false;
   document.querySelector("[data-installer-link]").href = data.installer.url;
 
+  setLink("[data-windows-link]", data.installer.url);
   setLink("[data-portable-link]", data.alternatives.windows_portable?.url, !data.alternatives.windows_portable);
   setLink("[data-linux-link]", data.alternatives.linux_x64?.url, !data.alternatives.linux_x64);
   setLink("[data-release-notes-link]", data.featured.release_url);
@@ -192,11 +191,19 @@ function renderRelease(data, sourceLabel, device) {
 }
 
 async function fetchGitHubReleaseData() {
-  const response = await fetch(RELEASES_API, {
-    headers: { Accept: "application/vnd.github+json" }, cache: "no-store",
-  });
-  if (!response.ok) throw new Error(`GitHub API returned ${response.status}`);
-  return buildReleaseData(await response.json());
+  const releases = [];
+  // Match the snapshot generator's pagination so historical totals stay consistent.
+  for (let page = 1; page <= 10; page += 1) {
+    const response = await fetch(`${RELEASES_API}&page=${page}`, {
+      headers: { Accept: "application/vnd.github+json" }, cache: "no-store",
+    });
+    if (!response.ok) throw new Error(`GitHub API returned ${response.status}`);
+    const batch = await response.json();
+    if (!Array.isArray(batch)) throw new Error("GitHub Releases response is invalid");
+    releases.push(...batch);
+    if (batch.length < 100) break;
+  }
+  return buildReleaseData(releases);
 }
 
 async function fetchSnapshotReleaseData() {
@@ -228,6 +235,9 @@ async function hydrateRelease() {
   } catch (snapshotError) {
     document.querySelector("[data-release-version]").textContent = "前往 GitHub Releases 取得最新版本";
     document.querySelector("[data-installer-link]").href = RELEASES_FALLBACK;
+    document.querySelector("[data-download-label]").textContent = "查看 GitHub Releases";
+    document.querySelector("[data-installer-name]").textContent = "Windows x64 · Linux x64";
+    document.querySelector("[data-installer-size]").textContent = "請到發布頁選擇檔案";
     document.querySelector("[data-download-stats]").hidden = true;
     document.querySelector("[data-release-status]").textContent = "目前無法讀取版本資料；下載按鈕已改為前往 GitHub Releases。";
     console.warn("CipherFS release data fallback:", snapshotError);
@@ -235,30 +245,105 @@ async function hydrateRelease() {
 }
 
 function setupStarPrompt() {
-  const downloadButton = document.querySelector("[data-installer-link]");
+  const links = Array.from(document.querySelectorAll(
+    "[data-installer-link], [data-windows-link], [data-portable-link], [data-linux-link]",
+  ));
   const prompt = document.querySelector("[data-star-prompt]");
   const closeButton = document.querySelector("[data-star-prompt-close]");
-  if (!downloadButton || !prompt || !closeButton) return;
+  if (!links.length || !prompt || !closeButton) return;
 
   let revealTimer = null;
-  const hidePrompt = () => {
-    if (revealTimer !== null) clearTimeout(revealTimer);
-    revealTimer = null;
-    prompt.classList.remove("is-visible");
-    window.setTimeout(() => { prompt.hidden = true; }, 550);
-  };
+  let dismissTimer = null;
+  let remaining = 12000;
+  let dismissStarted = 0;
+  let hovered = false;
+  let focused = false;
+  let lastDownloadLink = null;
+  const removers = [];
 
-  downloadButton.addEventListener("click", () => {
-    if (revealTimer !== null) clearTimeout(revealTimer);
+  function listen(target, type, handler) {
+    target.addEventListener(type, handler);
+    removers.push(() => target.removeEventListener(type, handler));
+  }
+  function clearTimers() {
+    if (revealTimer !== null) window.clearTimeout(revealTimer);
+    if (dismissTimer !== null) window.clearTimeout(dismissTimer);
+    revealTimer = dismissTimer = null;
+  }
+  function hidePrompt() {
+    clearTimers();
+    const restoreFocus = prompt.contains(document.activeElement);
     prompt.hidden = true;
-    prompt.classList.remove("is-visible");
-    revealTimer = window.setTimeout(() => {
-      prompt.hidden = false;
-      window.requestAnimationFrame(() => prompt.classList.add("is-visible"));
-      revealTimer = null;
-    }, 4500);
+    prompt.classList.remove("is-visible", "is-inline");
+    hovered = focused = false;
+    if (restoreFocus && lastDownloadLink) lastDownloadLink.focus();
+  }
+  function resumeDismiss() {
+    if (prompt.hidden || hovered || focused || dismissTimer !== null) return;
+    dismissStarted = Date.now();
+    dismissTimer = window.setTimeout(hidePrompt, remaining);
+  }
+  function pauseDismiss() {
+    if (dismissTimer === null) return;
+    window.clearTimeout(dismissTimer);
+    dismissTimer = null;
+    remaining = Math.max(0, remaining - (Date.now() - dismissStarted));
+  }
+  function isActualDownload(link) {
+    if (link.getAttribute("aria-disabled") === "true") return false;
+    try {
+      const url = new URL(link.href);
+      const filename = decodeURIComponent(url.pathname.split("/").pop());
+      return url.origin === "https://github.com"
+        && url.pathname.startsWith(`/${REPOSITORY}/releases/download/`)
+        && [ASSET_NAMES.installer, ASSET_NAMES.portable, ASSET_NAMES.linux].includes(filename);
+    } catch {
+      return false;
+    }
+  }
+  function avoidCoveringFocus() {
+    if (prompt.hidden || prompt.contains(document.activeElement)) return;
+    const active = document.activeElement;
+    if (!active || active === document.body || typeof active.getBoundingClientRect !== "function") return;
+    const panel = prompt.getBoundingClientRect();
+    const control = active.getBoundingClientRect();
+    if (panel.left < control.right && panel.right > control.left
+        && panel.top < control.bottom && panel.bottom > control.top) {
+      prompt.classList.add("is-inline");
+    }
+  }
+  for (const link of links) {
+    listen(link, "click", () => {
+      if (!isActualDownload(link)) return;
+      hidePrompt();
+      lastDownloadLink = link;
+      remaining = 12000;
+      revealTimer = window.setTimeout(() => {
+        revealTimer = null;
+        prompt.hidden = false;
+        prompt.classList.add("is-visible");
+        avoidCoveringFocus();
+        resumeDismiss();
+      }, 4500);
+    });
+  }
+  listen(closeButton, "click", hidePrompt);
+  listen(prompt, "mouseenter", () => { hovered = true; pauseDismiss(); });
+  listen(prompt, "mouseleave", () => { hovered = false; resumeDismiss(); });
+  listen(prompt, "focusin", () => { focused = true; pauseDismiss(); });
+  listen(prompt, "focusout", (event) => {
+    focused = prompt.contains(event.relatedTarget);
+    if (!focused) resumeDismiss();
   });
-  closeButton.addEventListener("click", hidePrompt);
+  listen(document, "focusin", avoidCoveringFocus);
+  listen(document, "keydown", (event) => {
+    if (event.key === "Escape" && !prompt.hidden) hidePrompt();
+  });
+  listen(window, "scroll", avoidCoveringFocus);
+  listen(window, "resize", avoidCoveringFocus);
+  listen(window, "pagehide", hidePrompt);
+  // A fresh page owns fresh timers; no storage or remembered display count.
+  return () => { hidePrompt(); removers.forEach((remove) => remove()); };
 }
 
 if (typeof document !== "undefined") {

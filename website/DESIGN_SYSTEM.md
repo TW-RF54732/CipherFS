@@ -1,93 +1,60 @@
 # CipherFS Website Design System
 
-This document is the source of truth for the two-page CipherFS product website.
-It distills the UI UX Pro Max recommendation for a low-variance, low-motion,
-Swiss-style product site while preserving the established CipherFS brand.
-
 ## Direction
 
-- Pattern: minimal and direct product landing page.
-- Mood: precise, quiet, technical, and trustworthy without implying audited security.
-- Composition: strong typographic hierarchy, visible grid, generous but purposeful space.
-- Brand: black, white, and gray form the structure; GUI blue `#3685f5` is the only accent.
-- Avoid: glow, glassmorphism, gradients, decorative blur, neon security motifs, floating cards,
-  excessive badges, and animation without functional meaning.
+A Traditional Chinese product website for Windows users, following quiet-web-design.
+Present real workflows with real screenshots. Keep the Hero static, the page naturally
+scrollable, and technical details subordinate to the next useful action.
 
 ## Tokens
 
-### Color
+- Canvas: `#141414`; surface: `#202020`; secondary surface: `#1b1b1b`.
+- Primary text: `#f5f5f5`; body: `#c0c0c0`; secondary: `#b5b5b5`.
+- Dividers: `#343434`; control borders: `#484848`.
+- Primary action: `#eeeeee` with `#141414` text.
+- System sans-serif with Chinese fallbacks; monospace only for code and paths.
+- Hero: responsive 36–72px; headings: 26–34px; body: 16–17px.
+- Content width: 1240px maximum; desktop gutters: 4vw; mobile gutters: 20px.
+- Section spacing: 48–80px; buttons: at least 48px high, 7px radius.
+- Screenshots and bounded panels: 12px radius, thin border, no decorative shadow.
 
-- Canvas: `#080d13`
-- Surface: `#101720`
-- Raised surface: `#151d27`
-- Primary text: `#f4f7fa`
-- Secondary text: `#a9b4c3`
-- Quiet text: `#8e9aaa`
-- Border: `#2a3542`
-- Accent: `#3685f5`
-- Accent text on dark surfaces: `#78b1ff`
-- Text on accent-filled controls: `#07111f`
-- Warning text: `#e6c27a`
-
-Normal text must meet WCAG AA 4.5:1 contrast. Focus indicators must use a visible
-2px outline with offset and at least 3:1 state contrast.
-
-### Typography
-
-- Font stack: `Segoe UI Variable`, `Segoe UI`, system sans-serif.
-- Code and technical labels: `Cascadia Code`, `Consolas`, monospace.
-- Display: responsive 56-112px, 700 weight, compact tracking.
-- Section heading: responsive 36-64px, 680 weight.
-- Body: 16-19px, 1.65 line height, maximum readable measure of 68 characters.
-- Labels: 11-13px, 700 weight, uppercase English where appropriate.
-
-### Layout and spacing
-
-- Maximum content width: 1180px.
-- Adaptive gutters: 24px mobile, 32px tablet, 40px desktop.
-- Spacing follows an 8px rhythm, with 4px used only for fine alignment.
-- Primary breakpoints: 375px, 768px, 1024px, and 1440px.
-- Screenshots are full-width within their grid cell and retain declared dimensions to avoid CLS.
-
-## Components
-
-- Navigation: consistent on both pages; active page is indicated by text and underline.
-- Buttons: one blue primary action per section; secondary actions use a border only.
-- Panels: square-to-moderate 16px radius, 1px border, no decorative shadows or glow.
-- Screenshots: one neutral frame treatment, no floating overlap, no artificial perspective.
-- Metrics: tabular figures with a clear label; data is hidden when unavailable.
-- Download resource rows: full-row links with visible hover, active, focus, and disabled states.
-- Star prompt: fixed, compact, dismissible, non-modal, and never obscures keyboard focus.
-- Safety boundary: compact, single-column, and visually subordinate to feature sections and the
-  final download action while retaining the audit, backup, security, testing, and source links.
+The original App icon and screenshots retain their colors. Website controls use gray
+rather than borrowing the application's blue. No decorative Hero animation is included.
 
 ## Page hierarchy
 
-### Introduction
+- Homepage: product benefit and download → pack → container operations → read-only
+  browsing → local/open-source principles → compact experimental boundary → download.
+- Download: recommendation, release metadata, Installer counts → installation
+  expectations → first Explorer action → alternative assets and verification → boundary.
+- 404: clear message, home and download actions, shared navigation and footer.
 
-1. Brand hero: `CipherFS`, Logo, the no-full-decryption mount benefit, download and GitHub actions.
-2. Windows Shell promise: Explorer → Pack → `.cfs` operations.
-3. Read-only mount: mount window and Explorer disk result.
-4. Verifiable product principles.
-5. Experimental Duress Password with its explicit feature boundary.
-6. Compact experimental-software boundary followed by the final download action.
+Desktop workflows alternate image/text placement. On mobile, the explanation always
+precedes its screenshot. Content remains visible without JavaScript.
 
-### Download
+## Download behavior
 
-1. Windows Installer as the single primary action.
-2. Version, date, size, current asset downloads, and historical installer total.
-3. Three installation expectations.
-4. First action after installation.
-5. Portable/Linux alternatives and verification resources.
-6. Experimental software boundary.
+Preserve the release JSON contract, device recommendation, live API/snapshot/Releases
+fallback, and Installer-only counts (not unique users). Counts remain visible across
+platforms with an explicit Windows Installer label. Unavailable counts are hidden.
 
-## Interaction and accessibility
+Every real Installer, portable ZIP, or Linux archive click schedules the Star prompt
+4.5 seconds later. Repeated clicks reset that timer without creating another prompt.
+No persistent storage or frequency limit. Releases and verification links do not trigger it.
+The prompt never claims that a download succeeded and opens GitHub in a separate tab.
 
-- All controls remain keyboard reachable and use semantic HTML.
-- Minimum mobile control height is 44px; adjacent controls keep at least 8px separation.
-- Hover is supplementary; no information or action depends on hover alone.
-- Motion is limited to 150-220ms state transitions using opacity or color.
-- `prefers-reduced-motion: reduce` disables non-essential transitions.
-- Meaningful images have descriptive Traditional Chinese alt text; decorative Logo instances use
-  empty alt text where the visible product name already supplies the same information.
-- Page content does not horizontally scroll at supported widths.
+The prompt is non-modal, does not take focus, and supports close and Escape. It auto-hides
+after 12 seconds, pausing while hovered or keyboard-focused. If focus would be covered,
+it uses its inline position instead. At widths of 900px or less it is inline below the
+release panel, so mobile download controls remain accessible.
+
+## Accessibility and checks
+
+Use semantic landmarks, one h1 per page, descriptive image alt text, declared image
+sizes, a skip link, current-page navigation, and a visible 2px focus outline. Text meets
+WCAG AA contrast. Links and controls have at least 44px touch targets. Hover never
+reveals required content. Reduced-motion disables transitions.
+
+Check 375, 768, 1024 and 1440px layouts, native scroll, keyboard navigation, and all
+release states. Run Node download tests, JavaScript syntax checks, release fixture tests
+and site validation before deployment through the existing GitHub Pages workflow.

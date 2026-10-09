@@ -39,7 +39,11 @@ foreach ($htmlFile in $htmlFiles) {
         $target = $match.Groups[1].Value
         if ($target -match '^(https?:|mailto:|data:)') { continue }
         $base = Split-Path -Parent $htmlFile.FullName
-        $local = Join-Path $base $target
+        if ($target.StartsWith('/CipherFS/')) {
+            $local = Join-Path $resolvedRoot $target.Substring('/CipherFS/'.Length)
+        } else {
+            $local = Join-Path $base $target
+        }
         if ($target.EndsWith('/')) { $local = Join-Path $local 'index.html' }
         Assert (Test-Path -LiteralPath $local) "Broken local reference in $($htmlFile.FullName): $target"
     }
